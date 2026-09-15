@@ -16,14 +16,14 @@ This project provisions a **2-node Oracle Database 11gR2 RAC (Real Application C
 ┌─────────────────────────────────────────────────────────┐
 │                    Host Machine                         │
 │                                                         │
-│  ┌──────────────┐    ┌──────────────┐                  │
-│  │   Node 1     │    │   Node 2     │                  │
-│  │  db11g-rac1  │    │  db11g-rac2  │                  │
-│  │              │    │              │                  │
-│  │ 192.168.56.11│    │ 192.168.56.12│                  │
-│  │ 10.10.10.11  │    │ 10.10.10.12  │                  │
-│  │ 192.168.56.1 │    │ 192.168.56.2 │                  │
-│  └──────────────┘    └──────────────┘                  │
+│  ┌──────────────┐    ┌──────────────┐                   │
+│  │   Node 1     │    │   Node 2     │                   │
+│  │  db11g-rac1  │    │  db11g-rac2  │                   │
+│  │              │    │              │                   │
+│  │ 192.168.56.11│    │ 192.168.56.12│                   │
+│  │ 10.10.10.11  │    │ 10.10.10.12  │                   │
+│  │ 192.168.56.1 │    │ 192.168.56.2 │                   │
+│  └──────────────┘    └──────────────┘                   │
 │         │                    │                          │
 │         └────────┬───────────┘                          │
 │                  │                                      │
@@ -57,7 +57,7 @@ This project provisions a **2-node Oracle Database 11gR2 RAC (Real Application C
 
 | Software | Minimum Version | Purpose |
 |----------|----------------|---------|
-| [VirtualBox](https://www.virtualbox.org/) | 6.1+ | Hypervisor |
+| VirtualBox | 6.1+ | Hypervisor |
 | Vagrant | 2.3+ | VM lifecycle management |
 | Ansible | 2.9+ | Configuration management |
 | Oracle Linux 6 ISO | - | Guest OS image (or CentOS 6) |
