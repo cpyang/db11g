@@ -1,0 +1,42 @@
+# ============================================================
+# Oracle 11gR2 RAC - RAC-specific Variables
+# ============================================================
+
+# Network configuration
+network_public_interface: eth0
+network_private_interface: eth1
+network_public_subnet: "192.168.56"
+network_private_subnet: "10.10.10"
+
+# SCAN configuration
+scan_name: "db11g-scan"
+scan_port: 1521
+
+# Cluster configuration
+cluster_name: "db11g-cluster"
+cluster_verification_timeout: 1800
+
+# Oracle installation files
+oracle_packages_dir: "/u01/install_packages"
+oracle_database_zip1: "linux.x64_11gR2_database_1of2.zip"
+oracle_database_zip2: "linux.x64_11gR2_database_2of2.zip"
+oracle_grid_zip: "linux.x64_11gR2_grid_1of1.zip"
+
+# ASM configuration
+asm_disk_string: "/dev/oracleasm/disks/*"
+asm_diskgroups:
+  - name: "DATA"
+    redundancy: "external"
+    disks:
+      - "OCR_VOTING"
+      - "DATA"
+  - name: "FRA"
+    redundancy: "external"
+    disks:
+      - "FRA"
+
+# Database configuration (for later use)
+db_name: "rac"
+db_memory_target: 2048
+db_character_set: "AL32UTF8"
+db_admin_password: "oracle"

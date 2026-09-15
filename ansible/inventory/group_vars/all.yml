@@ -1,0 +1,103 @@
+# ============================================================
+# Oracle 11gR2 RAC - Global Variables (all nodes)
+# ============================================================
+
+# Oracle software
+oracle_sw_version: "11.2.0.4"
+oracle_base: "/u01/app/oracle"
+oracle_home: "/u01/app/oracle/product/11.2.0/dbhome_1"
+grid_home: "/u01/app/11.2.0/grid"
+ora_inventory: "/u01/app/oraInventory"
+
+# Oracle users and groups
+oracle_installer_group: oinstall
+oracle_oper_group: dba
+oracle_asm_group: asmdba
+oracle_asm_oper_group: asmoper
+oracle_asm_admin_group: asmadmin
+
+# Passwords (change for production!)
+oracle_password: "oracle"
+grid_password: "oracle"
+
+# OS packages to install
+oracle_packages:
+  - binutils
+  - compat-libstdc++-33
+  - compat-libstdc++-33.i686
+  - elfutils-libelf
+  - elfutils-libelf-devel
+  - gcc
+  - gcc-c++
+  - glibc
+  - glibc.i686
+  - glibc-common
+  - glibc-devel
+  - glibc-devel.i686
+  - glibc-headers
+  - ksh
+  - libaio
+  - libaio.i686
+  - libaio-devel
+  - libaio-devel.i686
+  - libgcc
+  - libgcc.i686
+  - libstdc++
+  - libstdc++.i686
+  - libstdc++-devel
+  - libstdc++-devel.i686
+  - make
+  - sysstat
+  - unixODBC
+  - unixODBC-devel
+  - unixODBC.i686
+  - unixODBC-devel.i686
+
+# Kernel parameters for Oracle
+kernel_parameters:
+  fs.aio-max-nr: "1048576"
+  fs.file-max: "6815744"
+  kernel.shmall: "2097152"
+  kernel.shmmax: "4294967295"
+  kernel.shmmni: "4096"
+  kernel.sem: "250 32000 100 128"
+  net.ipv4.ip_local_port_range: "9000 65500"
+  net.core.rmem_default: "262144"
+  net.core.rmem_max: "4194304"
+  net.core.wmem_default: "262144"
+  net.core.wmem_max: "1048586"
+
+# Resource limits for oracle/grid users
+resource_limits:
+  oracle:
+    - { item: "soft", type: "nproc", value: "2047" }
+    - { item: "hard", type: "nproc", value: "16384" }
+    - { item: "soft", type: "nofile", value: "1024" }
+    - { item: "hard", type: "nofile", value: "65536" }
+    - { item: "soft", type: "memlock", value: "50000000" }
+    - { item: "hard", type: "memlock", value: "50000000" }
+  grid:
+    - { item: "soft", type: "nproc", value: "2047" }
+    - { item: "hard", type: "nproc", value: "16384" }
+    - { item: "soft", type: "nofile", value: "1024" }
+    - { item: "hard", type: "nofile", value: "65536" }
+    - { item: "soft", type: "memlock", value: "50000000" }
+    - { item: "hard", type: "memlock", value: "50000000" }
+
+# ASM disks (shared storage)
+asm_disks:
+  - name: "OCR_VOTING"
+    device: "/dev/sdb"
+    size_gb: 10
+  - name: "DATA"
+    device: "/dev/sdc"
+    size_gb: 20
+  - name: "FRA"
+    device: "/dev/sdd"
+    size_gb: 10
+
+# NTP configuration
+ntp_enabled: true
+ntp_servers:
+  - "0.centos.pool.ntp.org"
+  - "1.centos.pool.ntp.org"

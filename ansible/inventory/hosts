@@ -1,0 +1,22 @@
+[all:children]
+rac
+all_nodes
+
+[all_nodes]
+db11g-rac1
+db11g-rac2
+
+[rac]
+db11g-rac1
+db11g-rac2
+
+[rac:vars]
+ansible_user=vagrant
+ansible_ssh_private_key_file=~/.vagrant.d/insecure_private_key
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[rac1]
+db11g-rac1
+
+[rac2]
+db11g-rac2

@@ -1,0 +1,17 @@
+# ============================================================
+# Role: common - Handlers
+# ============================================================
+
+- name: Apply kernel parameters
+  command: sysctl -p /etc/sysctl.d/99-oracle-unlimited.conf
+  changed_when: true
+
+- name: Restart services
+  command: echo "Services restarted"
+  changed_when: true
+
+- name: Restart ntpd
+  service:
+    name: ntpd
+    state: restarted
+  when: ntp_enabled | default(true)

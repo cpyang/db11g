@@ -1,0 +1,22 @@
+# Do not remove the following line, or various programs
+# that require network functionality will fail.
+127.0.0.1	localhost.localdomain localhost
+::1		localhost6.localdomain6 localhost6
+
+# Public network
+{% for host in groups['rac'] %}
+{{ hostvars[host]['ansible_default_ipv4']['address'] | default(hostvars[host]['public_ip']) }}	{{ host }}
+{% endfor %}
+
+# Private network (cluster interconnect)
+{% for host in groups['rac'] %}
+{{ hostvars[host]['ansible_default_ipv4']['address'] | default(hostvars[host]['private_ip']) }}	{{ host }}-priv
+{% endfor %}
+
+# Virtual IPs
+{% for host in groups['rac'] %}
+{{ hostvars[host]['ansible_default_ipv4']['address'] | default(hostvars[host]['vip']) }}	{{ host }}-vip
+{% endfor %}
+
+# SCAN IP
+{{ hostvars[groups['rac'][0]]['ansible_default_ipv4']['address'] | default(hostvars[groups['rac'][0]]['scan_ip']) }}	{{ scan_name }}

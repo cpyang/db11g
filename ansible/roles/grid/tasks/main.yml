@@ -1,0 +1,160 @@
+# ============================================================
+# Role: grid
+# Installs Oracle Grid Infrastructure 11gR2
+# ============================================================
+
+- name: Check if Grid Infrastructure is already installed
+  stat:
+    path: "{{ grid_home }}/bin/crsctl"
+  register: grid_installed
+
+- name: Skip Grid installation if already installed
+  debug:
+    msg: "Grid Infrastructure already installed on {{ inventory_hostname }}. Skipping."
+  when: grid_installed.stat.exists
+
+- name: Create Oracle software directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: grid
+    group: "{{ oracle_installer_group }}"
+    mode: '0755'
+  loop:
+    - "{{ grid_home }}"
+    - "{{ grid_home }}/stage"
+    - "/u01/install_logs/grid"
+
+- name: Extract Grid Infrastructure software
+  unarchive:
+    src: "{{ oracle_packages_dir }}/{{ oracle_grid_zip }}"
+    dest: "{{ grid_home }}/stage"
+    owner: grid
+    group: "{{ oracle_installer_group }}"
+    mode: '0755'
+  become_user: grid
+  when: not grid_installed.stat.exists
+
+- name: Copy Grid response file
+  template:
+    src: grid.rsp.j2
+    dest: /tmp/grid_install.rsp
+    owner: grid
+    group: "{{ oracle_installer_group }}"
+    mode: '0644'
+
+- name: Install Grid Infrastructure (silent mode)
+  command: >
+    {{ grid_home }}/stage/grid/runInstaller -silent -responseFile /tmp/grid_install.rsp
+    -waitforcompletion
+    -ignorePrereq
+  become_user: grid
+  register: grid_install
+  changed_when: grid_install.rc == 0
+  when: not grid_installed.stat.exists
+
+- name: Run root.sh on first node
+  command: "{{ grid_home }}/root.sh"
+  become: true
+  when: inventory_hostname == groups['rac'][0] and not grid_installed.stat.exists
+  register: rootsh_result
+
+- name: Display root.sh output
+  debug:
+    var: rootsh_result.stdout_lines
+  when: inventory_hostname == groups['rac'][0]
+
+- name: Run root.sh on remaining nodes
+  command: "{{ grid_home }}/root.sh"
+  become: true
+  when: inventory_hostname != groups['rac'][0] and not grid_installed.stat.exists
+  register: rootsh_result
+
+- name: Display root.sh output on remaining nodes
+  debug:
+    var: rootsh_result.stdout_lines
+  when: inventory_hostname != groups['rac'][0]
+
+- name: Wait for Grid Infrastructure to stabilize
+  command: "{{ grid_home }}/crsctl check crs"
+  register: crs_check
+  changed_when: false
+  retries: 5
+  delay: 30
+  until: crs_check.rc == 0
+
+- name: Verify Grid Infrastructure installation
+  command: "{{ grid_home }}/crsctl check cluster"
+  register: cluster_check
+  changed_when: false
+  retries: 5
+  delay: 30
+  until: cluster_check.rc == 0
+
+- name: Display cluster status
+  debug:
+    var: cluster_check.stdout_lines
+
+- name: Configure ASM disks
+  command: "oracleasm createdisk {{ item.name }} {{ item.device }}"
+  loop: "{{ asm_disks }}"
+  become: true
+  when: inventory_hostname == groups['rac'][0]
+
+- name: Configure ASM disks on all nodes
+  command: "oracleasm scandisks"
+  become: true
+  when: inventory_hostname != groups['rac'][0]
+
+- name: List ASM disks
+  command: "oracleasm listdisks"
+  become: true
+  register: asm_disks_list
+  changed_when: false
+
+- name: Display ASM disks
+  debug:
+    var: asm_disks_list.stdout_lines
+
+- name: Create ASM disk group (DATA)
+  command: >
+    {{ grid_home }}/bin/sqlplus / as sysasm << 'SQL'
+    CREATE DISKGROUP DATA EXTERNAL REDUNDANCY
+    DISK '/dev/oracleasm/disks/OCR_VOTING', '/dev/oracleasm/disks/DATA'
+    ATTRIBUTE 'compatible.asm' = '11.2', 'compatible.rdbms' = '11.2';
+    SQL
+  when: inventory_hostname == groups['rac'][0]
+  changed_when: false
+
+- name: Create ASM disk group (FRA)
+  command: >
+    {{ grid_home }}/bin/sqlplus / as sysasm << 'SQL'
+    CREATE DISKGROUP FRA EXTERNAL REDUNDANCY
+    DISK '/dev/oracleasm/disks/FRA'
+    ATTRIBUTE 'compatible.asm' = '11.2', 'compatible.rdbms' = '11.2';
+    SQL
+  when: inventory_hostname == groups['rac'][0]
+  changed_when: false
+
+- name: Verify ASM disk groups
+  command: "{{ grid_home }}/bin/asmcmd lsdg"
+  register: asmcmd_result
+  changed_when: false
+  when: inventory_hostname == groups['rac'][0]
+
+- name: Display ASM disk groups
+  debug:
+    var: asmcmd_result.stdout_lines
+  when: inventory_hostname == groups['rac'][0]
+
+- name: Verify final cluster status
+  command: "{{ grid_home }}/crsctl stat res -t"
+  register: final_status
+  changed_when: false
+  retries: 10
+  delay: 30
+  until: final_status.rc == 0
+
+- name: Display final cluster status
+  debug:
+    var: final_status.stdout_lines

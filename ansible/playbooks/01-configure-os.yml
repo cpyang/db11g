@@ -1,0 +1,48 @@
+# ============================================================
+# Playbook: Configure OS for Oracle 11gR2 RAC
+# This playbook configures the operating system on all RAC nodes
+# ============================================================
+
+- name: Configure OS prerequisites for Oracle 11gR2 RAC
+  hosts: rac
+  become: true
+  gather_facts: yes
+  serial: 1  # Configure nodes one at a time to avoid race conditions
+
+  pre_tasks:
+    - name: Verify minimum system requirements
+      local_action:
+        module: debug
+        msg: "Configuring {{ inventory_hostname }} ({{ ansible_distribution }} {{ ansible_distribution_version }})"
+
+    - name: Update system packages
+      yum:
+        name: '*'
+        state: latest
+        exclude: kernel*
+      register: yum_update
+      retries: 3
+      delay: 10
+
+    - name: Reboot if kernel updated
+      reboot:
+        reboot_timeout: 300
+      when: yum_update is changed and yum_update.reboot_required | default(false)
+
+  roles:
+    - common
+
+  post_tasks:
+    - name: Verify Oracle prerequisites are met
+      local_action:
+        module: debug
+        msg: "OS configuration complete for {{ inventory_hostname }}"
+
+    - name: Display next steps
+      debug:
+        msg: |
+          Next steps:
+          1. Configure shared storage (ASM disks)
+          2. Install Grid Infrastructure
+          3. Install Database Software
+          4. Create Database

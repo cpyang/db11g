@@ -1,0 +1,61 @@
+# ============================================================
+# Playbook: Install Oracle Database 11gR2 Software
+# Installs database software on all RAC nodes
+# ============================================================
+
+- name: Install Oracle Database 11gR2 Software
+  hosts: rac
+  become: true
+  gather_facts: yes
+  serial: 1
+
+  pre_tasks:
+    - name: Verify Grid Infrastructure is running
+      command: "{{ grid_home }}/crsctl check crs"
+      register: crs_status
+      changed_when: false
+      failed_when: false
+
+    - name: Check if database software is already installed
+      stat:
+        path: "{{ oracle_home }}/bin/sqlplus"
+      register: sqlplus_bin
+
+    - name: Skip installation if already installed
+      debug:
+        msg: "Database software already installed on {{ inventory_hostname }}. Skipping."
+      when: sqlplus_bin.stat.exists
+
+    - name: Verify Oracle database packages are available
+      stat:
+        path: "{{ oracle_packages_dir }}/{{ item }}"
+      loop:
+        - "{{ oracle_database_zip1 }}"
+        - "{{ oracle_database_zip2 }}"
+      register: db_zips
+
+    - name: Fail if database zip files are not found
+      fail:
+        msg: "Database zip file not found. Please place them in {{ oracle_packages_dir }} first."
+      when: db_zips.results | map(attribute='stat.exists') | select('equalto', false) | list | length > 0
+
+  roles:
+    - database
+
+  post_tasks:
+    - name: Verify database software installation
+      command: "{{ oracle_home}/bin/sqlplus -version"
+      register: sqlplus_version
+      changed_when: false
+      failed_when: false
+
+    - name: Display SQL*Plus version
+      debug:
+        var: sqlplus_version.stdout
+
+    - name: Display next steps
+      debug:
+        msg: |
+          Next steps:
+          1. Run 05-create-database.yml to create the database
+          2. Or verify installation with: sqlplus / as sysdba

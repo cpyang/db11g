@@ -1,0 +1,244 @@
+# ============================================================
+# Role: common
+# Configures OS prerequisites for Oracle 11gR2 RAC
+# ============================================================
+
+- name: Set hostname
+  hostname:
+    name: "{{ inventory_hostname }}"
+  when: ansible_distribution == "OracleLinux" or ansible_distribution == "CentOS"
+
+- name: Configure /etc/hosts
+  template:
+    src: templates/hosts.j2
+    dest: /etc/hosts
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create Oracle groups
+  group:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - "{{ oracle_installer_group }}"
+    - "{{ oracle_oper_group }}"
+    - "{{ oracle_asm_group }}"
+    - "{{ oracle_asm_oper_group }}"
+    - "{{ oracle_asm_admin_group }}"
+
+- name: Create oracle user
+  user:
+    name: oracle
+    group: "{{ oracle_installer_group }}"
+    groups:
+      - "{{ oracle_oper_group }}"
+      - "{{ oracle_asm_group }}"
+    home: /home/oracle
+    shell: /bin/bash
+    createhome: yes
+    password: "{{ oracle_password | password_hash('sha512') }}"
+
+- name: Create grid user
+  user:
+    name: grid
+    group: "{{ oracle_installer_group }}"
+    groups:
+      - "{{ oracle_oper_group }}"
+      - "{{ oracle_asm_group }}"
+      - "{{ oracle_asm_oper_group }}"
+      - "{{ oracle_asm_admin_group }}"
+    home: /home/grid
+    shell: /bin/bash
+    createhome: yes
+    password: "{{ grid_password | password_hash('sha512') }}"
+
+- name: Set passwords for oracle and grid users
+  user:
+    name: "{{ item }}"
+    password: "{{ oracle_password | password_hash('sha512') }}"
+    state: password_update
+  loop:
+    - oracle
+    - grid
+
+- name: Configure sudo for oracle and grid users
+  lineinfile:
+    path: /etc/sudoers.d/{{ item }}
+    line: "{{ item }} ALL=(ALL) NOPASSWD: ALL"
+    create: yes
+    mode: '0440'
+    validate: '/usr/sbin/visudo -cf %s'
+  loop:
+    - oracle
+    - grid
+
+- name: Install required packages
+  yum:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ oracle_packages }}"
+  register: package_install
+  until: package_install is succeeded
+  retries: 3
+  delay: 10
+
+- name: Configure kernel parameters
+  template:
+    src: templates/sysctl.j2
+    dest: /etc/sysctl.d/99-oracle-unlimited.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Apply kernel parameters
+
+- name: Configure resource limits
+  template:
+    src: templates/limits.conf.j2
+    dest: /etc/security/limits.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart services
+
+- name: Disable transparent huge pages
+  lineinfile:
+    path: /etc/rc.d/rc.local
+    line: "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
+    create: yes
+    mode: '0755'
+  notify: Restart services
+
+- name: Disable THP on boot (systemd service)
+  copy:
+    dest: /etc/systemd/system/disable-thp.service
+    content: |
+      [Unit]
+      Description=Disable transparent huge pages
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c "echo never > /sys/kernel/mm/transparent_hugepage/enabled && echo never > /sys/kernel/mm/transparent_hugepage/defrag"
+      [Install]
+      WantedBy=multi-user.target
+    mode: '0644'
+  notify: Restart services
+
+- name: Enable THP disable service
+  command: systemctl enable disable-thp.service
+  changed_when: true
+
+- name: Create Oracle directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: oracle
+    group: "{{ oracle_installer_group }}"
+    mode: '0755'
+  loop:
+    - "{{ oracle_base }}"
+    - "{{ oracle_home }}"
+    - "{{ grid_home }}"
+    - "{{ ora_inventory }}"
+    - "/u01/install_packages"
+    - "/u01/install_logs"
+
+- name: Create ASM disk directory
+  file:
+    path: /dev/oracleasm/disks
+    state: directory
+    mode: '0755'
+
+- name: Configure NTP
+  template:
+    src: templates/ntp.conf.j2
+    dest: /etc/ntp.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart ntpd
+
+- name: Ensure NTP is enabled and running
+  service:
+    name: ntpd
+    state: started
+    enabled: yes
+
+- name: Configure SSH for oracle user (passwordless)
+  block:
+    - name: Create .ssh directory for oracle
+      file:
+        path: /home/oracle/.ssh
+        state: directory
+        owner: oracle
+        group: "{{ oracle_installer_group }}"
+        mode: '0700'
+
+    - name: Generate SSH key for oracle
+      command: ssh-keygen -t rsa -f /home/oracle/.ssh/id_rsa -N "" -q
+      become_user: oracle
+      args:
+        creates: /home/oracle/.ssh/id_rsa
+
+    - name: Create authorized_keys for oracle
+      copy:
+        content: ""
+        dest: /home/oracle/.ssh/authorized_keys
+        owner: oracle
+        group: "{{ oracle_installer_group }}"
+        mode: '0600'
+      when: inventory_hostname == groups['rac'][0]
+
+  when: inventory_hostname == groups['rac'][0]
+
+- name: Configure SSH for grid user (passwordless)
+  block:
+    - name: Create .ssh directory for grid
+      file:
+        path: /home/grid/.ssh
+        state: directory
+        owner: grid
+        group: "{{ oracle_installer_group }}"
+        mode: '0700'
+
+    - name: Generate SSH key for grid
+      command: ssh-keygen -t rsa -f /home/grid/.ssh/id_rsa -N "" -q
+      become_user: grid
+      args:
+        creates: /home/grid/.ssh/id_rsa
+
+    - name: Create authorized_keys for grid
+      copy:
+        content: ""
+        dest: /home/grid/.ssh/authorized_keys
+        owner: grid
+        group: "{{ oracle_installer_group }}"
+        mode: '0600'
+      when: inventory_hostname == groups['rac'][0]
+
+  when: inventory_hostname == groups['rac'][0]
+
+- name: Set Oracle environment variables for oracle user
+  template:
+    src: templates/.bash_profile.j2
+    dest: /home/oracle/.bash_profile
+    owner: oracle
+    group: "{{ oracle_installer_group }}"
+    mode: '0644'
+
+- name: Set Oracle environment variables for grid user
+  template:
+    src: templates/.bash_profile.j2
+    dest: /home/grid/.bash_profile
+    owner: grid
+    group: "{{ oracle_installer_group }}"
+    mode: '0644'
+
+- name: Ensure /tmp is not a symlink
+  file:
+    path: /tmp
+    state: directory
+    mode: '1777'
+
+- name: Verify all configurations
+  command: echo "Configuration complete for {{ inventory_hostname }}"
+  changed_when: true

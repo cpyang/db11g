@@ -1,0 +1,24 @@
+# Oracle installation packages (large files, need user to download)
+packages/
+
+# Generated shared disks
+disks/
+
+# Vagrant state
+.vagrant/
+
+# OS-generated files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Ansible
+ansible/*.retry
+ansible/__pycache__/
+ansible/roles/*/tasks/__pycache__/
+
+# Logs
+*.log
+install_logs/
