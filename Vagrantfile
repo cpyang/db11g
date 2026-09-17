@@ -94,18 +94,11 @@ Vagrant.configure("2") do |config|
         privileged: true,
         args: [node[:hostname], node[:public_ip], node[:private_ip], node[:vip], node[:scan_ip]]
 
-      # Ansible provisioner
-      node_config.vm.provision :ansible do |ansible|
-        ansible.verbose = "v"
-        ansible.inventory_path = "ansible/inventory/hosts"
-        ansible.limit = "all"
-        ansible.playbook = "ansible/playbooks/01-configure-os.yml"
-        ansible.groups = {
-          "rac" => NODES.keys,
-          "rac1" => [node_name],
-          "rac2" => (NODES.keys - [node_name])
-        }
-      end
+      # Generate SSH config from vagrant and run Ansible with it
+      node_config.vm.provision :shell,
+        path: "vagrant/scripts/ansible-provision.sh",
+        privileged: true,
+        args: [node_name]
     end
   end
 end
