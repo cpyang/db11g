@@ -60,7 +60,7 @@ This project provisions a **2-node Oracle Database 11gR2 RAC (Real Application C
 | VirtualBox | 6.1+ | Hypervisor |
 | Vagrant | 2.3+ | VM lifecycle management |
 | Ansible | 2.9+ | Configuration management |
-| Oracle Linux 6 ISO | - | Guest OS image (or CentOS 6) |
+| Oracle Linux 7 box | - | Official Oracle Linux 7 vagrant box (see Quick Start) |
 | Oracle 11gR2 software | - | Two zip files: `linux.x64_11gR2_database_1of2.zip`, `linux.x64_11gR2_database_2of2.zip` |
 
 ### Resource Requirements

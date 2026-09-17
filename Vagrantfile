@@ -39,17 +39,12 @@ NODES = {
 }
 
 Vagrant.configure("2") do |config|
-  # Use Oracle Linux 6 box (or CentOS 6)
-  config.vm.box = "oraclelinux/6"
-  config.vm.box_version = ">= 6.0"
+  # Use official Oracle Linux 7 box
+  config.vm.box = "oraclelinux/7"
+  config.vm.box_url = "https://oracle.github.io/vagrant-projects/boxes/oraclelinux/7.json"
 
   # Disable automatic box version checking
   config.vm.box_check_update = false
-
-  # Disable the box update mechanism
-  config.vm.provider :virtualbox do |vb|
-    vb.check_guest_tools = false
-  end
 
   # Configure shared disks (dynamically allocated VMDKs)
   DISK_PATH = File.join(__dir__, "disks")
@@ -80,7 +75,7 @@ Vagrant.configure("2") do |config|
         vb.customize ["modifyvm", :id, "--nictype2", "Am79C973"]  # 82540EM for private
         vb.customize ["modifyvm", :id, "--audio", "none"]
         vb.customize ["modifyvm", :id, "--clipboard", "bidirectional"]
-        vb.customize ["modifyvm", :id, "--draganddrop", "disable"]
+        vb.customize ["modifyvm", :id, "--draganddrop", "disabled"]
       end
 
       # Host-only network (public)
