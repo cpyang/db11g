@@ -79,14 +79,10 @@ Vagrant.configure("2") do |config|
       end
 
       # Host-only network (public)
-      node_config.vm.network "private_network", 
-        ip: node[:public_ip],
-        type: "dhcp"
+      node_config.vm.network "private_network", ip: node[:public_ip]
 
       # Private cluster network
-      node_config.vm.network "private_network", 
-        ip: node[:private_ip],
-        type: "dhcp"
+      node_config.vm.network "private_network", ip: node[:private_ip]
 
       # Bootstrap provisioner (initial setup before Ansible)
       node_config.vm.provision :shell, 

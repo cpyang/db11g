@@ -3,8 +3,8 @@ rac
 all_nodes
 
 [all_nodes]
-db11g-rac1
-db11g-rac2
+db11g-rac1 public_ip=192.168.56.11 private_ip=10.10.10.11 vip=192.168.56.101 scan_ip=192.168.56.100
+db11g-rac2 public_ip=192.168.56.12 private_ip=10.10.10.12 vip=192.168.56.102 scan_ip=192.168.56.100
 
 [rac]
 db11g-rac1
