@@ -49,7 +49,7 @@ yum update -y --exclude=kernel* 2>/dev/null || true
 
 # Install required packages for Ansible
 echo "Installing Ansible prerequisites..."
-yum install -y python2 python2-pip 2>/dev/null || true
+yum install -y python3 python3-pip 2>/dev/null || true
 
 # Configure NTP
 echo "Configuring NTP..."
