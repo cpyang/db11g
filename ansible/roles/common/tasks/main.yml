@@ -57,7 +57,7 @@
   user:
     name: "{{ item }}"
     password: "{{ oracle_password | password_hash('sha512') }}"
-    state: password_update
+    state: present
   loop:
     - oracle
     - grid
