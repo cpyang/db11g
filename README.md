@@ -98,7 +98,7 @@ mkdir -p packages
 ### 3. Provision the cluster
 
 ```bash
-# Bring up both nodes
+# Bring up both nodes (this runs initial bootstrap only)
 vagrant up
 
 # Or provision step by step
@@ -106,7 +106,16 @@ vagrant up db11g-rac1
 vagrant up db11g-rac2
 ```
 
-### 4. Verify the installation
+### 4. Run Ansible provisioning
+
+```bash
+# Run Ansible playbook to configure OS and install Oracle
+./vagrant/scripts/ansible-provision.sh
+```
+
+This script uses `vagrant ssh-config` to generate SSH configuration and runs the Ansible playbook with it.
+
+### 5. Verify the installation
 
 ```bash
 # SSH into a node

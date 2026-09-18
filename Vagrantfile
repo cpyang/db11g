@@ -93,12 +93,6 @@ Vagrant.configure("2") do |config|
         path: "vagrant/scripts/bootstrap.sh",
         privileged: true,
         args: [node[:hostname], node[:public_ip], node[:private_ip], node[:vip], node[:scan_ip]]
-
-      # Generate SSH config from vagrant and run Ansible with it
-      node_config.vm.provision :shell,
-        path: "vagrant/scripts/ansible-provision.sh",
-        privileged: true,
-        args: [node_name]
     end
   end
 end
