@@ -16,42 +16,10 @@
     group: root
     mode: '0644'
 
-- name: Create Oracle groups
-  group:
-    name: "{{ item }}"
-    state: present
-  loop:
-    - "{{ oracle_installer_group }}"
-    - "{{ oracle_oper_group }}"
-    - "{{ oracle_asm_group }}"
-    - "{{ oracle_asm_oper_group }}"
-    - "{{ oracle_asm_admin_group }}"
-
-- name: Create oracle user
-  user:
-    name: oracle
-    group: "{{ oracle_installer_group }}"
-    groups:
-      - "{{ oracle_oper_group }}"
-      - "{{ oracle_asm_group }}"
-    home: /home/oracle
-    shell: /bin/bash
-    createhome: yes
-    password: "{{ oracle_password | password_hash('sha512') }}"
-
-- name: Create grid user
-  user:
-    name: grid
-    group: "{{ oracle_installer_group }}"
-    groups:
-      - "{{ oracle_oper_group }}"
-      - "{{ oracle_asm_group }}"
-      - "{{ oracle_asm_oper_group }}"
-      - "{{ oracle_asm_admin_group }}"
-    home: /home/grid
-    shell: /bin/bash
-    createhome: yes
-    password: "{{ grid_password | password_hash('sha512') }}"
+# Note: oracle-rdbms-server-11gR2-preinstall package creates groups and users
+# - groups: oinstall, dba, asmdba, asmoper, asmadmin
+# - users: oracle, grid
+# So we skip manual creation and only set known passwords
 
 - name: Set passwords for oracle and grid users
   user:
@@ -83,23 +51,13 @@
   retries: 3
   delay: 10
 
-- name: Configure kernel parameters
-  template:
-    src: templates/sysctl.j2
-    dest: /etc/sysctl.d/99-oracle-unlimited.conf
-    owner: root
-    group: root
-    mode: '0644'
-  notify: Apply kernel parameters
-
-- name: Configure resource limits
-  template:
-    src: templates/limits.conf.j2
-    dest: /etc/security/limits.conf
-    owner: root
-    group: root
-    mode: '0644'
-  notify: Restart services
+# Note: oracle-rdbms-server-11gR2-preinstall package configures:
+# - All required OS packages
+# - Groups and users (oracle, grid)
+# - Kernel parameters (sysctl)
+# - Resource limits (limits.conf)
+# - Required directories
+# We only add THP disable which preinstall doesn't cover
 
 - name: Disable transparent huge pages
   lineinfile:

@@ -22,6 +22,7 @@ grid_password: "oracle"
 
 # OS packages to install
 oracle_packages:
+  - oracle-rdbms-server-11gR2-preinstall
   - binutils
   - compat-libstdc++-33
   - compat-libstdc++-33.i686
