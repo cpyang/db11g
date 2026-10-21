@@ -246,7 +246,11 @@
 
     - name: Publish local key material to hostvars
       set_fact:
-        cluster_pubs: "{{ ssh_users | zip(local_pubs.results | map(attribute='content') | map('b64decode') | map('trim') | list) | items2(key='user', value='pub') }}"
+        # dict(zip(...)) is Jinja-native; items2 proved unavailable in the
+        # 2.16/Jinja combo on di (2026-10-21: "Could not load 'items2'")
+        cluster_pubs: >-
+          {{ dict(ssh_users | zip(local_pubs.results
+             | map(attribute='content') | map('b64decode') | map('trim') | list)) }}
 
     - name: Assemble authorized_keys for each user (every node's key)
       copy:
