@@ -151,8 +151,21 @@
     - grid_phase == 'root'
     - crs_up.rc != 0
 
-- name: Wait for root.sh to reach its start-wait stage (OCR/OLR written)
-  shell: test -f /etc/oracle/ocr.loc || test -f /etc/oracle/olr.loc
+- name: Wait for root.sh to reach its inittab-wait stage
+  # olr.loc appears MINUTES before the inittab-wait phase — keying on it
+  # interleaved the stack-restart while root.sh still needed its own ohasd
+  # (killed a healthy root.sh at 1:56, di 2026-10-21). The log line is the
+  # true entrance to the wait loop; the async result file is the escape
+  # hatch for early-completion/early-death so we never poll 30 min pointlessly.
+  shell: |-
+    log=$(sudo ls -t {{ grid_home }}/install/root_*.log 2>/dev/null | head -1)
+    if [ -n "$log" ] && sudo grep -q 'Adding Clusterware entries to inittab' "$log"; then
+      echo WAITSTAGE; exit 0
+    fi
+    if sudo grep -q '"finished": 1' /root/.ansible_async/{{ rootsh_async.ansible_job_id }} 2>/dev/null; then
+      echo ALREADYDONE; exit 0
+    fi
+    exit 1
   register: rootsh_progress
   until: rootsh_progress.rc == 0
   retries: 180
@@ -174,7 +187,7 @@
   failed_when: false
   when:
     - rootsh_async is not skipped
-    - rootsh_progress.rc == 0
+    - "'WAITSTAGE' in rootsh_progress.stdout"
 
 - name: Wait for root.sh to complete
   async_status:

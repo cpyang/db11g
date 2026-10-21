@@ -20,7 +20,11 @@ done
 sleep 2
 
 $SUDO sed -i '/ohasd/d' /etc/inittab
-$SUDO rm -f /etc/oracle/olr.loc /etc/oracle/ocr.loc
+# Clear the FULL stranded-state set: root.sh also leaves scls_scr/lastgasp/
+# oprocd behind, and CRS-4046 "Invalid Oracle Clusterware configuration"
+# aborts the next root.sh at ~2 min if they survive (di 2026-10-21 15:24).
+$SUDO rm -f /etc/oracle/olr.loc /etc/oracle/ocr.loc /etc/oracle/olr.loc.orig /etc/oracle/ocr.loc.orig
+$SUDO rm -rf /etc/oracle/scls_scr /etc/oracle/lastgasp /etc/oracle/oprocd
 $SUDO rm -rf /var/run/oracle
 
 $SUDO rm -rf $GI
