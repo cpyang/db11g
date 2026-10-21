@@ -13,23 +13,27 @@
 #                   installer — OCR/voting live in it)
 # ============================================================
 
-- name: Default stage
+- name: Resolve stage from play vars
+  # NOTE the name split: the role never set_fact's grid_stage itself —
+  # a set_fact OUTLANKS play vars in precedence, so rewriting it in play 1
+  # pinned every later play to 'check' and 03/04 became no-op successes
+  # (di chain 2026-10-21 20:36). Read grid_stage, resolve into grid_phase.
   set_fact:
-    grid_stage: "{{ grid_stage | default('check') }}"
+    grid_phase: "{{ grid_stage | default('check') }}"
 
 # ------------------------------------------------------------------ check
 - name: Resolve NIC roles (needed by the rsp even on standalone runs)
   include_role:
     name: common
     tasks_from: resolve-interfaces
-  when: grid_stage == 'check'
+  when: grid_phase == 'check'
 
 - name: Confirm media is mounted read-only at {{ oracle_stage_dir }}
   stat:
     path: "{{ oracle_stage_dir }}/{{ oracle_grid_zip }}"
   register: grid_media
   failed_when: not grid_media.stat.exists
-  when: grid_stage == 'check'
+  when: grid_phase == 'check'
 
 - name: Confirm ASM discovery symlinks exist
   stat:
@@ -37,14 +41,14 @@
   loop: [CRS, DATA, FRA]
   register: asm_links
   failed_when: not asm_links.stat.exists
-  when: grid_stage == 'check'
+  when: grid_phase == 'check'
 
 # ------------------------------------------------------------------ software
 - name: Detect existing GI home
   stat:
     path: "{{ grid_home }}/bin/crsctl"
   register: crsctl_bin
-  when: grid_stage == 'software'
+  when: grid_phase == 'software'
 
 - name: Unarchive Grid Infrastructure media (node1; installer propagates)
   unarchive:
@@ -55,7 +59,7 @@
     group: "{{ oracle_installer_group }}"
   become_user: grid
   when:
-    - grid_stage == 'software'
+    - grid_phase == 'software'
     - not crsctl_bin.stat.exists
     - inventory_hostname == groups['rac'][0]
 
@@ -66,7 +70,7 @@
     owner: grid
     group: "{{ oracle_installer_group }}"
     mode: '0600'      # contains ASM monitor/sys passwords
-  when: grid_stage == 'software'
+  when: grid_phase == 'software'
 
 # 11.2.0.4 runInstaller returns 0 on success; non-zero here is a real abort.
 # -ignorePrereq accepts CVU WARNINGS — do not use this run to paper over
@@ -87,14 +91,14 @@
   timeout: 5400
   changed_when: true
   when:
-    - grid_stage == 'software'
+    - grid_phase == 'software'
     - not crsctl_bin.stat.exists
     - inventory_hostname == groups['rac'][0]
 
 - name: Show installer tail (empty list if the task was skipped)
   debug:
     msg: "{{ (gi_install.stderr_lines | default([]))[-10:] }}"
-  when: grid_stage == 'software'
+  when: grid_phase == 'software'
 
 # ------------------------------------------------------------------ root.sh
 - name: Check whether CRS is already up on this node
@@ -102,7 +106,7 @@
   register: crs_up
   failed_when: false
   changed_when: false
-  when: grid_stage == 'root'
+  when: grid_phase == 'root'
 
 - name: Run /u01/app/11.2.0/grid/root.sh (as root — do this node1 FIRST)
   command: "{{ grid_home }}/root.sh"
@@ -111,13 +115,13 @@
   timeout: 3600
   changed_when: true
   when:
-    - grid_stage == 'root'
+    - grid_phase == 'root'
     - crs_up.rc != 0
 
 - name: Show root.sh tail
   debug:
     msg: "{{ (gi_rootsh.stdout_lines | default(['(root.sh skipped — CRS already online on this node)']))[-12:] }}"
-  when: grid_stage == 'root'
+  when: grid_phase == 'root'
 
 # ------------------------------------------------------------------ DGs
 # Existence MUST be parsed from `crsctl stat res -t` output — both
@@ -130,7 +134,7 @@
   register: res_table
   changed_when: false
   when:
-    - grid_stage == 'dgs'
+    - grid_phase == 'dgs'
     - inventory_hostname == groups['rac'][0]
 
 - name: Create DATA disk group
@@ -145,7 +149,7 @@
     ORACLE_HOME: "{{ grid_home }}"
     ORACLE_SID: "+ASM{{ node_num }}"
   when:
-    - grid_stage == 'dgs'
+    - grid_phase == 'dgs'
     - inventory_hostname == groups['rac'][0]
     - res_table.stdout is not search('ora\\.data\\.dg')
 
@@ -161,7 +165,7 @@
     ORACLE_HOME: "{{ grid_home }}"
     ORACLE_SID: "+ASM{{ node_num }}"
   when:
-    - grid_stage == 'dgs'
+    - grid_phase == 'dgs'
     - inventory_hostname == groups['rac'][0]
     - res_table.stdout is not search('ora\\.fra\\.dg')
 
@@ -176,10 +180,10 @@
   until: cluster_ok.rc == 0
   changed_when: false
   when:
-    - grid_stage == 'dgs'
+    - grid_phase == 'dgs'
     - inventory_hostname == groups['rac'][0]
 
 - name: Cluster status
   debug:
     msg: "{{ cluster_ok.stdout_lines | default(['(dgs stage not run on this node)']) }}"
-  when: grid_stage == 'dgs'
+  when: grid_phase == 'dgs'

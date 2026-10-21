@@ -13,9 +13,10 @@
 # install still reports success — size (not existence) is the check.
 # ============================================================
 
-- name: Default stage
+- name: Resolve stage from play vars
+  # see grid role: never overwrite db_stage itself (facts beat play vars)
   set_fact:
-    db_stage: "{{ db_stage | default('check') }}"
+    db_phase: "{{ db_stage | default('check') }}"
 
 # ------------------------------------------------------------------ check
 - name: Confirm database media is visible on the staging mount
@@ -25,7 +26,7 @@
   register: db_media
   failed_when: not db_media.stat.exists
   when:
-    - db_stage == 'check'
+    - db_phase == 'check'
     - inventory_hostname == groups['rac'][0]   # only node1 runs the installer
 
 # ------------------------------------------------------------------ software
@@ -33,7 +34,7 @@
   stat:
     path: "{{ oracle_home }}/bin/oracle"
   register: db_binary
-  when: db_stage == 'software'
+  when: db_phase == 'software'
 
 - name: Unarchive Database media (two parts overlay into database/)
   unarchive:
@@ -45,7 +46,7 @@
   become_user: oracle
   loop: "{{ oracle_database_zips }}"
   when:
-    - db_stage == 'software'
+    - db_phase == 'software'
     - not (db_binary.stat.exists | default(false) and db_binary.stat.size | default(0) > 1048576)
     - inventory_hostname == groups['rac'][0]
 
@@ -57,7 +58,7 @@
     group: "{{ oracle_installer_group }}"
     mode: '0600'
   when:
-    - db_stage == 'software'
+    - db_phase == 'software'
     - inventory_hostname == groups['rac'][0]
 
 - name: Install RDBMS software (node1; propagates to CLUSTER_NODES)
@@ -76,14 +77,14 @@
   timeout: 5400
   changed_when: true
   when:
-    - db_stage == 'software'
+    - db_phase == 'software'
     - not (db_binary.stat.exists | default(false) and db_binary.stat.size | default(0) > 1048576)
     - inventory_hostname == groups['rac'][0]
 
 - name: Show installer tail (empty list if the task was skipped)
   debug:
     msg: "{{ (db_install.stderr_lines | default([]))[-10:] }}"
-  when: db_stage == 'software'
+  when: db_phase == 'software'
 
 # ------------------------------------------------------------------ root.sh
 # Idempotent and cheap (relink/setuid) — run on EVERY node every phase run;
@@ -94,12 +95,12 @@
   failed_when: db_rootsh.rc != 0
   timeout: 900
   changed_when: true
-  when: db_stage == 'root'
+  when: db_phase == 'root'
 
 - name: Show root.sh tail
   debug:
     msg: "{{ (db_rootsh.stdout_lines | default(['(root stage not run here)']))[-8:] }}"
-  when: db_stage == 'root'
+  when: db_phase == 'root'
 
 # ------------------------------------------------------------------ verify
 - name: Verify bin/oracle on every node (propagation completeness)
@@ -108,7 +109,7 @@
   register: db_bin_check
   failed_when: >-
     not db_bin_check.stat.exists or db_bin_check.stat.size < 1048576
-  when: db_stage == 'verify'
+  when: db_phase == 'verify'
 
 - name: Verify setuid bit on bin/oracle (root.sh ran on THIS node)
   shell: >-
@@ -116,7 +117,7 @@
   register: setuid_check
   changed_when: false
   failed_when: not (setuid_check.stdout.split(' ')[0] is match('67.*'))
-  when: db_stage == 'verify'
+  when: db_phase == 'verify'
 
 - name: Client TNS aliases (SCAN + per-instance; listeners are CRS resources)
   template:
@@ -125,7 +126,7 @@
     owner: oracle
     group: "{{ oracle_installer_group }}"
     mode: '0644'
-  when: db_stage == 'verify'
+  when: db_phase == 'verify'
 
 - name: sqlplus version (needs ORACLE_HOME in env or it dies SP2-0667)
   command: "{{ oracle_home }}/bin/sqlplus -version"
@@ -134,9 +135,9 @@
     ORACLE_HOME: "{{ oracle_home }}"
   register: sqlplus_v
   changed_when: false
-  when: db_stage == 'verify'
+  when: db_phase == 'verify'
 
 - name: Show version
   debug:
     msg: "{{ sqlplus_v.stdout | default('(skipped)') }}"
-  when: db_stage == 'verify'
+  when: db_phase == 'verify'
