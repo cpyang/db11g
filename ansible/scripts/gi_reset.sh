@@ -28,10 +28,11 @@ $SUDO rm -rf /etc/oracle/scls_scr /etc/oracle/lastgasp /etc/oracle/oprocd
 $SUDO rm -rf /var/run/oracle
 
 $SUDO rm -rf $GI
+$SUDO rm -rf /u01/app/grid/* /u01/app/11.2.0/grid/install/chainedInstall   # gpnp profile/wallets + chained jobs = CRS-4046 on retry
 $SUDO rm -rf /u01/app/oraInventory
 $SUDO rm -rf /u01/media
 $SUDO rm -f /u01/tmp/*.rsp
-$SUDO rm -rf /u01/app/grid/diag /u01/app/grid/cfgtoollogs /u01/app/oracle/cfgtoollogs
+$SUDO rm -rf /u01/app/oracle/cfgtoollogs
 
 echo "RESET_DONE $(hostname)"
 $SUDO ls -la /u01/app/ 2>/dev/null | head -8
