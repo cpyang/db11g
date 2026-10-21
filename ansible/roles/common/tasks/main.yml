@@ -40,6 +40,8 @@
     name: NetworkManager
     state: stopped
     enabled: no
+  ignore_errors: true   # oraclelinux/7 box ships NO NetworkManager at all;
+                        # service module fails "could not find" -> not a problem
 
 # DHCP on eth0 (NAT) would rewrite /etc/resolv.conf and drop the scan entry.
 - name: Disable PEERDNS on the NAT interface
