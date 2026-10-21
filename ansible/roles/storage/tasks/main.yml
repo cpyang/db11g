@@ -19,7 +19,11 @@
   vars:
     role_flag: "{{ 'node1' if inventory_hostname == groups['rac'][0] else 'node2' }}"
   script:
-    cmd: "/bin/bash {{ role_path }}/../../scripts/asm_setup.sh {{ role_flag }}"
+    # script: copies the FIRST path token in cmd to the guest — prefixing
+    # with /bin/bash shipped the controller's Ubuntu bash into the EL7 VM
+    # (died on libtinfo.so.6, rc 127; di 2026-10-21). Path first, arg after;
+    # the script's own #!/bin/bash shebang runs it.
+    cmd: "{{ role_path }}/../../scripts/asm_setup.sh {{ role_flag }}"
   register: asm_out
   failed_when: asm_out.rc != 0
 
