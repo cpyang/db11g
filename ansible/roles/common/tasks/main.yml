@@ -124,7 +124,9 @@
       - "{{ oracle_asm_dba_group }}"
     home: /home/oracle
     shell: /bin/bash
-    password_lock: no
+    # no password_lock: no — a fresh passwordless account has shadow '!'
+    # and usermod refuses to "unlock" it to empty (di 2026-10-21). Key-auth
+    # + NOPASSWD sudo need no password state at all.
     append: true
 
 - name: Create grid user (GI owner — must NOT be in dba)
@@ -138,7 +140,6 @@
       - "{{ oracle_asm_oper_group }}"
     home: /home/grid
     shell: /bin/bash
-    password_lock: no
     append: true
 
 - name: Sudo for oracle/grid (root.sh phase and installer CVU root checks)
