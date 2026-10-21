@@ -12,6 +12,15 @@
       - hostvars[inventory_hostname].vip is defined
     fail_msg: "inventory host vars public_ip/private_ip/vip are mandatory (see inventory/hosts)"
 
+# ---------------------------------------------------------------- packages
+# Install FIRST: later tasks start services (dnsmasq, ntpd) whose units
+# only exist once these land — service-before-package order bit us live
+# on di 2026-10-21 ("Could not find the requested service dnsmasq").
+- name: Install Oracle prerequisite packages
+  package:
+    name: "{{ oracle_packages }}"
+    state: present
+
 # ---------------------------------------------------------------- network/identity
 - name: Set FQDN hostname
   hostname:
@@ -96,11 +105,6 @@
   reboot:
     reboot_timeout: 420
   when: getenforce_out.stdout == 'Enforcing'
-
-- name: Install Oracle prerequisite packages
-  package:
-    name: "{{ oracle_packages }}"
-    state: present
 
 # ---------------------------------------------------------------- users
 - name: Create Oracle groups with fixed GIDs (identical on every node)
