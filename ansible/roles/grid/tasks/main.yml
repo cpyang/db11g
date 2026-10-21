@@ -122,8 +122,11 @@
       [Service]
       Type=oneshot
       RemainAfterExit=yes
-      ExecStart={{ grid_home }}/bin/crsctl start crs
-      # NO ExecStop — 'systemctl stop' must never tear the stack mid-phase
+      KillMode=none
+      ExecStart=/bin/sh -c 'af=/etc/oracle/scls_scr/$(hostname | cut -d. -f1)/root/ohasdrun; echo restart > $af; setsid /etc/rc.d/init.d/init.ohasd run >>/var/log/init.ohasd.supervisor 2>&1 &'
+      # Supervisor-loop form (see Start-HAS task for the pipe-pairing
+      # postmortem). KillMode=none so systemd never reaps the detached
+      # loop + daemon children (di 18:24).
       [Install]
       WantedBy=multi-user.target
   when: grid_phase == 'root'
@@ -142,68 +145,75 @@
   changed_when: false
   when: grid_phase == 'root'
 
-- name: Launch root.sh (async — interleaved stack start below)
+- name: Run root.sh (first pass, dies at the EL7 ohasd respawn gap)
+  # No interleave, no async. root.sh's own ~30-min wait happens BEFORE it
+  # logs 'ohasd failed to start' (di 2026-10-21 16:16->16:52 timeline), so
+  # a plain blocking run leaves no window to race. Everything through the
+  # inittab write (OLR, gpnp profile/wallets, ohasdrun=reboot) is left
+  # behind intact for the completion pass below.
   command: "{{ grid_home }}/root.sh"
-  async: 7200
-  poll: 0
-  register: rootsh_async
+  timeout: 3600
+  register: rootsh_first
+  failed_when: false
+  changed_when: true
   when:
     - grid_phase == 'root'
     - crs_up.rc != 0
 
-- name: Wait for root.sh to reach its inittab-wait stage
-  # olr.loc appears MINUTES before the inittab-wait phase — keying on it
-  # interleaved the stack-restart while root.sh still needed its own ohasd
-  # (killed a healthy root.sh at 1:56, di 2026-10-21). The log line is the
-  # true entrance to the wait loop; the async result file is the escape
-  # hatch for early-completion/early-death so we never poll 30 min pointlessly.
+- name: Verify first-pass failure is only the EL7 ohasd gap
   shell: |-
-    log=$(sudo ls -t {{ grid_home }}/install/root_*.log 2>/dev/null | head -1)
-    if [ -n "$log" ] && sudo grep -q 'Adding Clusterware entries to inittab' "$log"; then
-      echo WAITSTAGE; exit 0
+    if [ {{ rootsh_first.rc | default(0) }} -eq 0 ]; then echo CLEAN_PASS; exit 0; fi
+    log=$(ls -t {{ grid_home }}/install/root_*.log 2>/dev/null | head -1)
+    if [ -n "$log" ] && grep -q 'ohasd failed to start' "$log"; then
+      echo EXPECTED_EL7_GAP; exit 0
     fi
-    if sudo grep -q '"finished": 1' /root/.ansible_async/{{ rootsh_async.ansible_job_id }} 2>/dev/null; then
-      echo ALREADYDONE; exit 0
-    fi
+    echo "UNEXPECTED root.sh failure — last 30 lines:"
+    tail -30 "$log" 2>/dev/null
     exit 1
-  register: rootsh_progress
-  until: rootsh_progress.rc == 0
-  retries: 180
-  delay: 5
   changed_when: false
-  when: rootsh_async is not skipped
+  when: rootsh_first is not skipped
 
-- name: Start the CRS stack over cleaned processes (unblock root.sh's wait)
+- name: Start HAS so ohasd bootstraps from ohasdrun=reboot
+  # The working piece is the init.ohasd RUN loop (the SysV inittab client,
+  # which spawns ohasd.bin itself) — 'crsctl start has' only raises an
+  # orphan ohasd.bin that logs CRS-0715 and dies (di 17:02-17:13 alert log).
   shell: |-
-    {{ grid_home }}/bin/crsctl stop crs -f >/dev/null 2>&1 || true
+    {{ grid_home }}/bin/crsctl stop has -f >/dev/null 2>&1 || true
     sleep 5
     pkill -9 -f 'bin/ohasd.bin' 2>/dev/null || true
-    pkill -9 -f 'bin/crsd.bin'  2>/dev/null || true
-    pkill -9 -f 'bin/ocssd.bin' 2>/dev/null || true
-    sleep 3
-    {{ grid_home }}/bin/crsctl start crs
-  register: stack_start
+    pkill -f 'init.ohasd run' 2>/dev/null || true
+    # ohasd.bin parks in a nanosleep loop until its init.ohasd supervisor
+    # pipe partner exists (di 18:31: ohasd.bin alive, socket bound, check
+    # has = CRS-4639 forever). The restart branch in the SysV loop is the
+    # ONLY code path that execs bin/ohasd restart AND opens the pipe read
+    # side; the reboot-state boot branch deadlocks under systemd (crsctl
+    # start has inside that loop waits on this same pipe). So: set the
+    # autorun state to restart first, then run the loop detached.
+    af=/etc/oracle/scls_scr/$(hostname | cut -d. -f1 | tr 'A-Z' 'a-z')/root/ohasdrun
+    echo restart > $af
+    setsid /bin/sh -c "/etc/rc.d/init.d/init.ohasd run >>/var/log/init.ohasd.supervisor 2>&1" &
+    for i in $(seq 1 48); do
+      sleep 5
+      {{ grid_home }}/bin/crsctl check has 2>/dev/null && exit 0
+    done
+    echo "HAS did not come up"
+    exit 1
   changed_when: true
-  failed_when: false
   when:
-    - rootsh_async is not skipped
-    - "'WAITSTAGE' in rootsh_progress.stdout"
+    - rootsh_first is not skipped
+    - rootsh_first.rc != 0
 
-- name: Wait for root.sh to complete
-  async_status:
-    jid: "{{ rootsh_async.ansible_job_id }}"
-  register: rootsh_result
-  until: rootsh_result.finished is defined and rootsh_result.finished == 1
-  retries: 240
-  delay: 30
-  failed_when: >-
-    rootsh_result.finished is not defined or rootsh_result.finished != 1
-    or rootsh_result.rc != 0
-  when: rootsh_async is not skipped
+- name: Run root.sh (second pass, completes with a live stack)
+  command: "{{ grid_home }}/root.sh"
+  timeout: 1800
+  register: rootsh_second
+  when:
+    - rootsh_first is not skipped
+    - rootsh_first.rc != 0
 
 - name: Show root.sh result tail
   debug:
-    msg: "{{ (rootsh_result.stdout_lines | default(['(root stage skipped or already online on this node)']))[-12:] }}"
+    msg: "{{ (rootsh_second.stdout_lines | default(rootsh_first.stdout_lines | default(['(root stage skipped or already online on this node)']))) | default([]) }}"
   when: grid_phase == 'root'
 
 # ------------------------------------------------------------------ DGs
