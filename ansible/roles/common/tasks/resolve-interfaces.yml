@@ -1,34 +1,41 @@
 # Resolve NIC roles BY ADDRESS (never by ethX — the Vagrant box has
 # eth0 = NAT first). Included by roles/common and by the grid role's
-# check stage (so a standalone `--tags`/stage run can still render rsp files).
-- set_fact:
-    _iface_map: "{{ ansible_facts['ansible_interface_facts'] }}"
-
+# check stage (so a standalone stage run can still render rsp files).
+#
+# ansible-core 2.16 fact API notes (hit live on di 2026-10-21):
+#   * there is NO aggregated 'ansible_interface_facts' key in
+#     ansible_facts — referencing it dies with "'dict object' has no
+#     attribute". Per-interface facts live at ansible_facts[<ifname>].
+#   * ansible_interfaces starts with 'lo' — it carries ipv4 127.0.0.1 and
+#     would be mis-picked as the "NAT" NIC. Always exclude lo.
 - name: Find public interface
   set_fact:
     pub_iface: "{{ item }}"
   loop: "{{ ansible_interfaces }}"
   when: >-
-    _iface_map[item].ipv4 is defined and
-    _iface_map[item]['ipv4']['address'] == public_ip
+    item != 'lo' and
+    ansible_facts[item]['ipv4'] is defined and
+    ansible_facts[item]['ipv4'].get('address') == public_ip
 
 - name: Find interconnect interface
   set_fact:
     priv_iface: "{{ item }}"
   loop: "{{ ansible_interfaces }}"
   when: >-
-    _iface_map[item].ipv4 is defined and
-    _iface_map[item]['ipv4']['address'] == private_ip
+    item != 'lo' and
+    ansible_facts[item]['ipv4'] is defined and
+    ansible_facts[item]['ipv4'].get('address') == private_ip
 
 - name: Find remaining addressed NIC (NAT) — response files mark it 'do not use'
   set_fact:
     nat_iface: "{{ item }}"
-    nat_subnet: "{{ _iface_map[item]['ipv4']['network'] }}"
+    nat_subnet: "{{ ansible_facts[item]['ipv4'].get('network', '10.0.2.0') }}"
   loop: "{{ ansible_interfaces }}"
   when: >-
-    _iface_map[item].ipv4 is defined and
-    _iface_map[item]['ipv4'].get('address') is defined and
-    _iface_map[item]['ipv4']['address'] not in [public_ip, private_ip] and
+    item != 'lo' and
+    ansible_facts[item]['ipv4'] is defined and
+    ansible_facts[item]['ipv4'].get('address') is defined and
+    ansible_facts[item]['ipv4']['address'] not in [public_ip, private_ip] and
     nat_iface is not defined
 
 - name: Assert interfaces resolved

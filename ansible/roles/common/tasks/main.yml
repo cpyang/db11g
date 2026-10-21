@@ -48,7 +48,7 @@
     regexp: '^PEERDNS='
     line: 'PEERDNS=no'
     insertafter: '^BOOTPROTO='
-  when: ansible_facts['ansible_interface_facts']['eth0'] is defined
+  when: "'eth0' in ansible_facts"
   register: peerdns
   failed_when: false
 
