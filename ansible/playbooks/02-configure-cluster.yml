@@ -1,39 +1,47 @@
 # ============================================================
-# Playbook: Configure Cluster Prerequisites
-# Prepares shared storage and ASM disks for RAC
+# Playbook 02 — cluster prerequisites: shared ASM disks + ssh/DNS trust
+# Run: ansible-playbook playbooks/02-configure-cluster.yml
 # ============================================================
 
-- name: Configure shared storage and ASM disks
+- name: Provision shared ASM disks
   hosts: rac
+  gather_facts: true
   become: true
-  gather_facts: yes
-  serial: 1  # Configure nodes one at a time
-
-  pre_tasks:
-    - name: Verify shared disks are accessible
-      command: lsblk
-      register: lsblk_output
-
-    - name: Display disk information
-      debug:
-        var: lsblk_output.stdout
-
+  serial: 1            # node1 partitions FIRST; the peer only maps after
   roles:
-    - common
+    - storage
 
-  post_tasks:
-    - name: Verify ASM disks are configured
-      command: ls -l /dev/oracleasm/disks/
-      register: asm_disks
+- name: Cluster prerequisite verification
+  hosts: rac
+  gather_facts: false
+  become: true
+  vars:
+    ssh_users: [oracle, grid]
+  tasks:
+    # If a hop here is broken, the installer's CVU ssh (non-PTY, BatchMode)
+    # WILL fail later with the classic INS-06006/PRVF-5311 misdirection.
+    # Fail here, loudly, per-hop, while it is still cheap.
+    - name: "Trust probe: installer user -> every node (incl. self)"
+      command: >-
+        ssh -o BatchMode=yes -o ConnectTimeout=8
+        {{ hostvars[item.1].short_name }} true
+      become_user: "{{ item.0 }}"
+      loop: "{{ ssh_users | product(groups['rac']) | list }}"
+      loop_control:
+        label: "{{ item.0 }}@{{ inventory_hostname }} -> {{ item.1 }}"
       changed_when: false
 
-    - name: Display ASM disk status
-      debug:
-        var: asm_disks.stdout
+    - name: "DNS probe: SCAN name must answer from local dnsmasq"
+      command: nslookup {{ scan_name }} 127.0.0.1
+      register: dns_probe
+      changed_when: false
+      failed_when: >-
+        dns_probe.rc != 0 or scan_ip not in dns_probe.stdout
 
-    - name: Display next steps
-      debug:
-        msg: |
-          Next steps:
-          1. Run 03-install-grid.yml to install Grid Infrastructure
-          2. Run 04-install-db.yml to install Database software
+    - name: "Hosts probe: vip/priv/self names resolve"
+      command: getent hosts {{ item }}
+      loop:
+        - "{{ short_name }}-vip.{{ domain_name }}"
+        - "{{ short_name }}-priv.{{ domain_name }}"
+        - "{{ inventory_hostname }}"
+      changed_when: false

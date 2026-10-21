@@ -1,0 +1,125 @@
+# ============================================================
+# Playbook 05 — create the RAC database (dbca, silent)
+# Phase 1: single-instance create on node1 (the path that reliably gets
+#          past CVU in RAC labs), Phase 2: addInstance for node2,
+#          Phase 3: FRA pointer + start + verify 2 OPEN instances.
+# Run: ansible-playbook playbooks/05-create-db.yml
+#
+# NOTE before first real run: confirm the exact dbca -createDatabase /
+# -addInstance flag names on the VM with
+#   $ORACLE_HOME/bin/dbca -silent -createDatabase -help
+#   $ORACLE_HOME/bin/dbca -silent -addInstance   -help
+# (11.2.0.4 flags differ from 19c; this file follows the 11.2 grammar.)
+# ============================================================
+
+- name: Create RAC database {{ db_name }}
+  hosts: rac[0]
+  gather_facts: false
+  become: true
+  vars:
+    db_home_env:
+      ORACLE_HOME: "{{ oracle_home }}"
+      ORACLE_SID: "{{ db_sid_prefix }}1"
+      PATH: "{{ oracle_home }}/bin:/usr/bin:/bin"
+  tasks:
+    - name: "Check whether database is already registered with GI"
+      command: "{{ grid_home }}/bin/srvctl config database -d {{ db_name }}"
+      become_user: grid
+      register: db_registered
+      failed_when: false
+      changed_when: false
+
+    - name: Resolve addInstance host name (node2 FQDN)
+      set_fact:
+        node2_fqdn: "{{ groups['rac'][1] }}"
+
+    # -recoveryGroupName is intentionally NOT passed: ASM-managed FRA is
+    # pointed at +FRA via spfile below (DBT-6604-style sizing traps).
+    - name: dbca createDatabase (single-instance first; 20-40 min)
+      command: >-
+        {{ oracle_home }}/bin/dbca -silent -createDatabase
+        -templateName {{ dbca_template }}
+        -gdbName {{ db_name }}
+        -sid {{ db_sid_prefix }}1
+        -sysPassword {{ sys_password }}
+        -systemPassword {{ system_password }}
+        -dbsnmpPassword {{ dbsnmp_password }}
+        -emConfiguration NONE
+        -storageType ASM
+        -diskGroupName {{ asm_diskgroup_data }}
+        -characterSet {{ db_charset }}
+        -nationalCharacterSet {{ db_ncharset }}
+        -memoryPercentage {{ db_memory_percentage }}
+        -databaseType OLTP
+        -sampleSchema false
+      become_user: oracle
+      environment: "{{ db_home_env }}"
+      register: dbca_create
+      timeout: 7200
+      changed_when: true
+      when: db_registered.rc != 0
+
+    - name: dbca addInstance for node2
+      command: >-
+        {{ oracle_home }}/bin/dbca -silent -addInstance
+        -dbName {{ db_name }}
+        -instanceName {{ db_sid_prefix }}2
+        -hostName {{ node2_fqdn }}
+        -sysDBAUserName sys
+        -sysDBAPassword {{ sys_password }}
+        -enableThread true
+      become_user: oracle
+      environment: "{{ db_home_env }}"
+      register: dbca_add
+      timeout: 3600
+      changed_when: true
+      when: db_registered.rc != 0
+      failed_when: dbca_add.rc != 0
+
+    - name: Point db_recovery_file_dest at +FRA (dynamic; dest before size)
+      shell: |-
+        {{ oracle_home }}/bin/sqlplus -S / as sysdba <<'SQL'
+        ALTER SYSTEM SET db_recovery_file_dest='+{{ asm_diskgroup_fra }}' SCOPE=BOTH SID='*';
+        ALTER SYSTEM SET db_recovery_file_dest_size=8G SCOPE=BOTH SID='*';
+        EXIT
+        SQL
+      become_user: oracle
+      environment: "{{ db_home_env }}"
+      register: fra_set
+      changed_when: true
+      # ORA-32001/ORA-02096 combos mean "already set" — re-run safe, but
+      # show the line so a genuine error is visible:
+      failed_when: >-
+        fra_set.rc != 0 or 'ORA-' in fra_set.stdout
+      ignore_errors: true
+      tags: [fra]
+
+    - name: Ensure database is up (any state at play start)
+      command: "{{ grid_home }}/bin/srvctl start database -d {{ db_name }}"
+      become_user: oracle
+      register: db_start
+      failed_when: db_start.rc != 0 and 'already running' not in db_start.stderr
+      changed_when: true
+
+    - name: Verify both instances OPEN
+      shell: |-
+        {{ oracle_home }}/bin/sqlplus -S / as sysdba <<'SQL'
+        SET HEADING OFF FEEDBACK OFF PAGESIZE 0
+        SELECT COUNT(*) FROM gv$instance WHERE status = 'OPEN';
+        EXIT
+        SQL
+      become_user: oracle
+      environment: "{{ db_home_env }}"
+      register: inst_count
+      retries: 20
+      delay: 30
+      until: (inst_count.stdout | trim | int) == (groups['rac'] | length)
+      changed_when: false
+
+    - name: Result
+      debug:
+        msg: >-
+          {{ db_name }}: {{ inst_count.stdout | trim }} of
+          {{ groups['rac'] | length }} instances OPEN.
+          Connect: sqlplus system/{{ system_password }}@{{ db_name }}_SCAN
+          (from {{ inventory_hostname }}).

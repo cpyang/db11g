@@ -1,42 +1,28 @@
 # ============================================================
-# Oracle 11gR2 RAC - RAC-specific Variables
+# RAC cluster variables
 # ============================================================
 
-# Network configuration
-network_public_interface: eth0
-network_private_interface: eth1
-network_public_subnet: "192.168.56"
-network_private_subnet: "10.10.10"
+# Interface roles are resolved BY ADDRESS at runtime (never ethX — the box
+# carries eth0=NAT first). See roles/common/tasks/main.yml.
+network_public_subnet: "{{ network_public }}.0"
+network_private_subnet: "{{ network_private }}.0"
 
-# SCAN configuration
-scan_name: "db11g-scan"
+# GI rsp values
+grid_install_tmp: /u01/tmp
 scan_port: 1521
 
-# Cluster configuration
-cluster_name: "db11g-cluster"
-cluster_verification_timeout: 1800
+# Disk groups: CRS holds OCR+voting (created by the installer);
+# DATA and FRA are created by asmca after root.sh.
+asm_diskgroup_crs: CRS
+asm_diskgroup_data: DATA
+asm_diskgroup_fra: FRA
+asm_diskstring: "/dev/oracleasm/disks/*"
 
-# Oracle installation files
-oracle_packages_dir: "/u01/install_packages"
-oracle_database_zip1: "linux.x64_11gR2_database_1of2.zip"
-oracle_database_zip2: "linux.x64_11gR2_database_2of2.zip"
-oracle_grid_zip: "linux.x64_11gR2_grid_1of1.zip"
-
-# ASM configuration
-asm_disk_string: "/dev/oracleasm/disks/*"
-asm_diskgroups:
-  - name: "DATA"
-    redundancy: "external"
-    disks:
-      - "OCR_VOTING"
-      - "DATA"
-  - name: "FRA"
-    redundancy: "external"
-    disks:
-      - "FRA"
-
-# Database configuration (for later use)
-db_name: "rac"
-db_memory_target: 2048
-db_character_set: "AL32UTF8"
-db_admin_password: "oracle"
+# --- Database (playbook 05) ---
+db_name: rac
+db_unique_name: rac
+db_sid_prefix: rac            # instances rac1, rac2 (= prefix + node_num)
+db_charset: AL32UTF8
+db_ncharset: AL16UTF16
+db_memory_percentage: 40
+dbca_template: "{{ oracle_home }}/assist/dbca/templates/General_Purpose.dbc"

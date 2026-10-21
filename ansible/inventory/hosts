@@ -1,22 +1,21 @@
-[all:children]
-rac
-all_nodes
-
-[all_nodes]
-db11g-rac1 public_ip=192.168.56.11 private_ip=10.10.10.11 vip=192.168.56.101 scan_ip=192.168.56.100
-db11g-rac2 public_ip=192.168.56.12 private_ip=10.10.10.12 vip=192.168.56.102 scan_ip=192.168.56.100
+# db11g RAC inventory
+# Hostnames are FQDNs on purpose: 11.2 CVU rejects non-FQDN nodes (PRVF-4167)
+# and the response files register nodes by the name `hostname` prints.
+# ansible_host = the VBox host-only IP; the Vagrant machine key authenticates.
 
 [rac]
-db11g-rac1
-db11g-rac2
+db11g-rac1.db11g.lab ansible_host=192.168.86.11 short_name=db11g-rac1 node_num=1 public_ip=192.168.86.11 private_ip=10.90.90.11 vip=192.168.86.101 ansible_ssh_private_key_file=../.vagrant/machines/db11g-rac1/virtualbox/private_key
+db11g-rac2.db11g.lab ansible_host=192.168.86.12 short_name=db11g-rac2 node_num=2 public_ip=192.168.86.12 private_ip=10.90.90.12 vip=192.168.86.102 ansible_ssh_private_key_file=../.vagrant/machines/db11g-rac2/virtualbox/private_key
 
 [rac:vars]
 ansible_user=vagrant
-ansible_ssh_private_key_file=~/.vagrant.d/insecure_private_key
-ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_become=yes
+ansible_become_method=sudo
 
-[rac1]
-db11g-rac1
-
-[rac2]
-db11g-rac2
+[all:vars]
+domain_name=db11g.lab
+network_public=192.168.86
+network_private=10.90.90
+scan_name=db11g-scan
+scan_ip=192.168.86.100
+cluster_name=db11g-cluster

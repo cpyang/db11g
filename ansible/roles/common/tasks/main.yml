@@ -1,202 +1,315 @@
 # ============================================================
-# Role: common
-# Configures OS prerequisites for Oracle 11gR2 RAC
+# Role: common — OS preparation for Oracle 11.2.0.4 RAC on EL7
+# Everything the old bootstrap.sh tried (badly, for EL6) to do, plus the
+# installer prerequisites 11.2 CVU actually checks.
 # ============================================================
 
-- name: Set hostname
+- name: Require per-host network vars (public_ip/private_ip/vip)
+  assert:
+    that:
+      - hostvars[inventory_hostname].public_ip is defined
+      - hostvars[inventory_hostname].private_ip is defined
+      - hostvars[inventory_hostname].vip is defined
+    fail_msg: "inventory host vars public_ip/private_ip/vip are mandatory (see inventory/hosts)"
+
+# ---------------------------------------------------------------- network/identity
+- name: Set FQDN hostname
   hostname:
     name: "{{ inventory_hostname }}"
-  when: ansible_distribution == "OracleLinux" or ansible_distribution == "CentOS"
 
 - name: Configure /etc/hosts
   template:
-    src: templates/hosts.j2
+    src: hosts.j2
     dest: /etc/hosts
     owner: root
     group: root
     mode: '0644'
 
-# Note: oracle-rdbms-server-11gR2-preinstall package creates groups and users
-# - groups: oinstall, dba, asmdba, asmoper, asmadmin
-# - users: oracle, grid
-# So we skip manual creation and only set known passwords
+- name: Resolve NIC roles by address
+  include_tasks: resolve-interfaces.yml
 
-- name: Set passwords for oracle and grid users
-  user:
-    name: "{{ item }}"
-    password: "{{ oracle_password | password_hash('sha512') }}"
-    state: present
-  loop:
-    - oracle
-    - grid
+- name: Stop/disable firewalld
+  service:
+    name: firewalld
+    state: stopped
+    enabled: no
+  ignore_errors: true   # disabled at bootstrap; belt and braces
 
-- name: Configure sudo for oracle and grid users
+- name: Keep NetworkManager off (network-scripts own ifcfg-*)
+  service:
+    name: NetworkManager
+    state: stopped
+    enabled: no
+
+# DHCP on eth0 (NAT) would rewrite /etc/resolv.conf and drop the scan entry.
+- name: Disable PEERDNS on the NAT interface
   lineinfile:
-    path: /etc/sudoers.d/{{ item }}
-    line: "{{ item }} ALL=(ALL) NOPASSWD: ALL"
-    create: yes
+    path: /etc/sysconfig/network-scripts/ifcfg-eth0
+    regexp: '^PEERDNS='
+    line: 'PEERDNS=no'
+    insertafter: '^BOOTPROTO='
+  when: ansible_facts['ansible_interface_facts']['eth0'] is defined
+  register: peerdns
+  failed_when: false
+
+- name: Configure local DNS (dnsmasq answers the scan/vip names)
+  template:
+    src: dnsmasq.conf.j2
+    dest: /etc/dnsmasq.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart dnsmasq
+
+- name: Start dnsmasq
+  service:
+    name: dnsmasq
+    state: started
+    enabled: yes
+
+- name: Configure resolver
+  template:
+    src: resolv.conf.j2
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+# ---------------------------------------------------------------- security/os
+- name: SELinux status (bootstrap already set disabled; verify, no collection needed)
+  command: getenforce
+  register: getenforce_out
+  changed_when: false
+
+- name: Ensure SELinux disabled persistently
+  lineinfile:
+    path: /etc/selinux/config
+    regexp: '^SELINUX='
+    line: 'SELINUX=disabled'
+
+# If the box booted enforcing, runtime is still enforcing until a reboot —
+# 11.2 installers misbehave under Enforcing, so reboot once instead of
+# silently proceeding.
+- name: Reboot once if currently enforcing
+  reboot:
+    reboot_timeout: 420
+  when: getenforce_out.stdout == 'Enforcing'
+
+- name: Install Oracle prerequisite packages
+  package:
+    name: "{{ oracle_packages }}"
+    state: present
+
+# ---------------------------------------------------------------- users
+- name: Create Oracle groups with fixed GIDs (identical on every node)
+  group:
+    name: "{{ item.key }}"
+    gid: "{{ item.value }}"
+    state: present
+  loop: "{{ os_groups | dict2items }}"
+
+- name: Create oracle user
+  user:
+    name: oracle
+    uid: 500
+    group: "{{ oracle_installer_group }}"
+    groups:
+      - "{{ oracle_db_group }}"
+      - "{{ oracle_asm_dba_group }}"
+    home: /home/oracle
+    shell: /bin/bash
+    password_lock: no
+    append: true
+
+- name: Create grid user (GI owner — must NOT be in dba)
+  user:
+    name: grid
+    uid: 501
+    group: "{{ oracle_installer_group }}"
+    groups:
+      - "{{ oracle_asm_group }}"
+      - "{{ oracle_asm_dba_group }}"
+      - "{{ oracle_asm_oper_group }}"
+    home: /home/grid
+    shell: /bin/bash
+    password_lock: no
+    append: true
+
+- name: Sudo for oracle/grid (root.sh phase and installer CVU root checks)
+  copy:
+    content: "{{ item }} ALL=(ALL) NOPASSWD: ALL\n"
+    dest: "/etc/sudoers.d/{{ item }}"
     mode: '0440'
     validate: '/usr/sbin/visudo -cf %s'
+  loop: [oracle, grid]
+
+# ---------------------------------------------------------------- filesystems
+- name: Oracle directory tree
+  file:
+    path: "{{ item.path }}"
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default(oracle_installer_group) }}"
+    mode: "{{ item.mode | default('0755') }}"
+    state: directory
   loop:
-    - oracle
-    - grid
+    - { path: /u01, mode: '0755' }
+    - { path: /u01/app, owner: oracle, mode: '0775' }
+    - { path: "{{ oracle_base }}", owner: oracle, mode: '0775' }
+    - { path: /u01/app/grid, owner: grid, mode: '0775' }
+    - { path: /u01/app/11.2.0, owner: grid, mode: '0775' }
+    - { path: /u01/staging, mode: '0755' }        # mountpoint (vboxsf, ro)
+    - { path: /u01/media, owner: grid, mode: '0775' }
+    - { path: /u01/tmp, mode: '1777' }             # installer scratch off /tmp
+  loop_control:
+    label: "{{ item.path }}"
 
-- name: Install required packages
-  yum:
-    name: "{{ item }}"
-    state: present
-  loop: "{{ oracle_packages }}"
-  register: package_install
-  until: package_install is succeeded
-  retries: 3
-  delay: 10
+- name: Kernel parameters
+  template:
+    src: sysctl.j2
+    dest: /etc/sysctl.d/99-oracle-rac.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: apply sysctl
 
-# Note: oracle-rdbms-server-11gR2-preinstall package configures:
-# - All required OS packages
-# - Groups and users (oracle, grid)
-# - Kernel parameters (sysctl)
-# - Resource limits (limits.conf)
-# - Required directories
-# We only add THP disable which preinstall doesn't cover
+- name: Resource limits (drop-in, do NOT overwrite the managed limits.conf)
+  template:
+    src: limits.conf.j2
+    dest: /etc/security/limits.d/99-oracle-rac.conf
+    owner: root
+    group: root
+    mode: '0644'
 
-- name: Disable transparent huge pages
-  lineinfile:
-    path: /etc/rc.d/rc.local
-    line: "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
-    create: yes
-    mode: '0755'
-  notify: Restart services
-
-- name: Disable THP on boot (systemd service)
+- name: Disable transparent huge pages (systemd unit, both knobs)
   copy:
     dest: /etc/systemd/system/disable-thp.service
+    mode: '0644'
     content: |
       [Unit]
-      Description=Disable transparent huge pages
+      Description=Disable transparent huge pages (Oracle workload)
       [Service]
       Type=oneshot
       ExecStart=/bin/sh -c "echo never > /sys/kernel/mm/transparent_hugepage/enabled && echo never > /sys/kernel/mm/transparent_hugepage/defrag"
+      RemainAfterExit=yes
       [Install]
       WantedBy=multi-user.target
-    mode: '0644'
-  notify: Restart services
+  register: thp_unit
 
-- name: Enable THP disable service
-  command: systemctl enable disable-thp.service
-  changed_when: true
+- name: THP unit daemon-reload + enable
+  systemd:
+    name: disable-thp
+    daemon_reload: "{{ thp_unit is changed }}"
+    enabled: yes
+    state: started
 
-- name: Create Oracle directories
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: oracle
-    group: "{{ oracle_installer_group }}"
-    mode: '0755'
-  loop:
-    - "{{ oracle_base }}"
-    - "{{ oracle_home }}"
-    - "{{ grid_home }}"
-    - "{{ ora_inventory }}"
-    - "/u01/install_packages"
-    - "/u01/install_logs"
+# ---------------------------------------------------------------- ssh trust
+# The 11.2.0.4 installer's built-in Java ssh CANNOT read modern OpenSSH
+# (ed25519 / new-format RSA) keys — keys are generated as classic PEM.
+# (Same failure mode as the 19c lab: gridSetup log "Failed to add identity
+# file id_rsa. Reason: invalid privatekey" while native ssh looks fine.)
+- name: Passwordless ssh trust for oracle and grid (all nodes, incl. self)
+  vars:
+    ssh_users: [oracle, grid]
+  block:
+    - name: Create ~/.ssh for each installer user
+      file:
+        path: "/home/{{ item }}/.ssh"
+        state: directory
+        owner: "{{ item }}"
+        group: "{{ oracle_installer_group }}"
+        mode: '0700'
+      loop: "{{ ssh_users }}"
 
-- name: Create ASM disk directory
-  file:
-    path: /dev/oracleasm/disks
-    state: directory
-    mode: '0755'
+    - name: Generate classic-PEM RSA keypair per user (if absent)
+      command: >-
+        ssh-keygen -t rsa -b 2048 -m PEM -N '' -q
+        -f /home/{{ item }}/.ssh/id_rsa
+        -C {{ item }}@{{ short_name }}
+      args:
+        creates: /home/{{ item }}/.ssh/id_rsa
+      become_user: "{{ item }}"
+      loop: "{{ ssh_users }}"
 
-- name: Configure NTP
+    - name: Read local public keys
+      slurp:
+        src: "/home/{{ item }}/.ssh/id_rsa.pub"
+      loop: "{{ ssh_users }}"
+      register: local_pubs
+
+    - name: Publish local key material to hostvars
+      set_fact:
+        cluster_pubs: "{{ ssh_users | zip(local_pubs.results | map(attribute='content') | map('b64decode') | map('trim') | list) | items2(key='user', value='pub') }}"
+
+    - name: Assemble authorized_keys for each user (every node's key)
+      copy:
+        content: |
+          {% for node in groups['rac'] %}
+          {{ hostvars[node].cluster_pubs[item] }} {{ item }}@{{ hostvars[node].short_name }}
+          {% endfor %}
+        dest: "/home/{{ item }}/.ssh/authorized_keys"
+        owner: "{{ item }}"
+        group: "{{ oracle_installer_group }}"
+        mode: '0600'
+      loop: "{{ ssh_users }}"
+
+    - name: Collect host keys for every cluster name/IP (this node's view)
+      shell: >-
+        set -o pipefail;
+        for h in {{ domain_name }} {{ groups['rac'] | map('regex_replace', '\\.' ~ domain_name ~ '$', '') | join(' ') }} {{ short_name }}
+        {% for n in groups['rac'] %}
+        {{ hostvars[n].public_ip }} {{ hostvars[n].private_ip }} {{ hostvars[n].vip }}
+        {% endfor %}
+        {% for n in groups['rac'] %}{{ n }} {% endfor %}
+        {{ scan_name }}; do ssh-keyscan -T 5 "$h" 2>/dev/null; done | sort -u
+      register: hostkeys_scan
+      changed_when: false
+
+    - name: Write known_hosts for each installer user
+      copy:
+        content: "{{ hostkeys_scan.stdout }}\n"
+        dest: "/home/{{ item }}/.ssh/known_hosts"
+        owner: "{{ item }}"
+        group: "{{ oracle_installer_group }}"
+        mode: '0644'
+      loop: "{{ ssh_users }}"
+
+# ---------------------------------------------------------------- time sync
+- name: NTP configuration (both nodes sync the same external pool)
   template:
-    src: templates/ntp.conf.j2
+    src: ntp.conf.j2
     dest: /etc/ntp.conf
     owner: root
     group: root
     mode: '0644'
-  notify: Restart ntpd
+  notify: restart ntpd
 
-- name: Ensure NTP is enabled and running
+- name: NTP enabled and running
   service:
     name: ntpd
     state: started
     enabled: yes
 
-- name: Configure SSH for oracle user (passwordless)
-  block:
-    - name: Create .ssh directory for oracle
-      file:
-        path: /home/oracle/.ssh
-        state: directory
-        owner: oracle
-        group: "{{ oracle_installer_group }}"
-        mode: '0700'
-
-    - name: Generate SSH key for oracle
-      command: ssh-keygen -t rsa -f /home/oracle/.ssh/id_rsa -N "" -q
-      become_user: oracle
-      args:
-        creates: /home/oracle/.ssh/id_rsa
-
-    - name: Create authorized_keys for oracle
-      copy:
-        content: ""
-        dest: /home/oracle/.ssh/authorized_keys
-        owner: oracle
-        group: "{{ oracle_installer_group }}"
-        mode: '0600'
-      when: inventory_hostname == groups['rac'][0]
-
-  when: inventory_hostname == groups['rac'][0]
-
-- name: Configure SSH for grid user (passwordless)
-  block:
-    - name: Create .ssh directory for grid
-      file:
-        path: /home/grid/.ssh
-        state: directory
-        owner: grid
-        group: "{{ oracle_installer_group }}"
-        mode: '0700'
-
-    - name: Generate SSH key for grid
-      command: ssh-keygen -t rsa -f /home/grid/.ssh/id_rsa -N "" -q
-      become_user: grid
-      args:
-        creates: /home/grid/.ssh/id_rsa
-
-    - name: Create authorized_keys for grid
-      copy:
-        content: ""
-        dest: /home/grid/.ssh/authorized_keys
-        owner: grid
-        group: "{{ oracle_installer_group }}"
-        mode: '0600'
-      when: inventory_hostname == groups['rac'][0]
-
-  when: inventory_hostname == groups['rac'][0]
-
-- name: Set Oracle environment variables for oracle user
+# ---------------------------------------------------------------- profiles
+- name: Shell profile (oracle → DB home)
   template:
-    src: templates/.bash_profile.j2
+    src: bash_profile.j2
     dest: /home/oracle/.bash_profile
     owner: oracle
     group: "{{ oracle_installer_group }}"
     mode: '0644'
+  vars:
+    profile_base: "{{ oracle_base }}"
+    profile_home: "{{ oracle_home }}"
+    profile_sid: "{{ db_sid_prefix }}{{ node_num }}"
 
-- name: Set Oracle environment variables for grid user
+- name: Shell profile (grid → GI home)
   template:
-    src: templates/.bash_profile.j2
+    src: bash_profile.j2
     dest: /home/grid/.bash_profile
     owner: grid
     group: "{{ oracle_installer_group }}"
     mode: '0644'
-
-- name: Ensure /tmp is not a symlink
-  file:
-    path: /tmp
-    state: directory
-    mode: '1777'
-
-- name: Verify all configurations
-  command: echo "Configuration complete for {{ inventory_hostname }}"
-  changed_when: true
+  vars:
+    profile_base: "{{ grid_base }}"
+    profile_home: "{{ grid_home }}"
+    profile_sid: "+ASM{{ node_num }}"

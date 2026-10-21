@@ -1,123 +1,142 @@
 # ============================================================
-# Role: database
-# Installs Oracle Database 11gR2 Software
+# Role: database — Oracle RDBMS 11.2.0.4 software (media: 1of7 + 2of7)
+#
+# Same install model as the grid role: runInstaller on node1 propagates
+# to the peers listed in CLUSTER_NODES over oracle's ssh trust.
+#   stage=check     media present (node1 mount)
+#   stage=software  node1: unzip both parts, rsp, runInstaller
+#   stage=root      per node: $OH/root.sh (setuid oracle binary)
+#   stage=verify    per node: bin/oracle real + setuid; tnsnames alias
+#
+# bin/oracle SIZE guard: an install that never propagated leaves the
+# remote home's bin/oracle as the zip's 0-byte placeholder while the
+# install still reports success — size (not existence) is the check.
 # ============================================================
 
-- name: Check if Database software is already installed
+- name: Default stage
+  set_fact:
+    db_stage: "{{ db_stage | default('check') }}"
+
+# ------------------------------------------------------------------ check
+- name: Confirm database media is visible on the staging mount
   stat:
-    path: "{{ oracle_home }}/bin/sqlplus"
-  register: db_installed
+    path: "{{ oracle_stage_dir }}/{{ item }}"
+  loop: "{{ oracle_database_zips }}"
+  register: db_media
+  failed_when: not db_media.stat.exists
+  when:
+    - db_stage == 'check'
+    - inventory_hostname == groups['rac'][0]   # only node1 runs the installer
 
-- name: Skip Database installation if already installed
-  debug:
-    msg: "Database software already installed on {{ inventory_hostname }}. Skipping."
-  when: db_installed.stat.exists
+# ------------------------------------------------------------------ software
+- name: Detect a fully-populated DB home (bin/oracle > 1 MB)
+  stat:
+    path: "{{ oracle_home }}/bin/oracle"
+  register: db_binary
+  when: db_stage == 'software'
 
-- name: Create Oracle database directories
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: oracle
-    group: "{{ oracle_installer_group }}"
-    mode: '0755'
-  loop:
-    - "{{ oracle_home }}"
-    - "/u01/install_logs/database"
-
-- name: Extract Database software zip files
+- name: Unarchive Database media (two parts overlay into database/)
   unarchive:
-    src: "{{ oracle_packages_dir }}/{{ item }}"
-    dest: "/u01/install_packages/database"
+    src: "{{ oracle_stage_dir }}/{{ item }}"
+    dest: "{{ oracle_media_dir }}"
+    remote_src: true
     owner: oracle
     group: "{{ oracle_installer_group }}"
-    mode: '0755'
-  loop:
-    - "{{ oracle_database_zip1 }}"
-    - "{{ oracle_database_zip2 }}"
   become_user: oracle
-  when: not db_installed.stat.exists
+  loop: "{{ oracle_database_zips }}"
+  when:
+    - db_stage == 'software'
+    - not (db_binary.stat.exists | default(false) and db_binary.stat.size | default(0) > 1048576)
+    - inventory_hostname == groups['rac'][0]
 
-- name: Copy Database response file
+- name: Render db_install.rsp
   template:
     src: db_install.rsp.j2
-    dest: /tmp/db_install.rsp
+    dest: "{{ grid_install_tmp }}/db_install.rsp"
     owner: oracle
     group: "{{ oracle_installer_group }}"
-    mode: '0644'
+    mode: '0600'
+  when:
+    - db_stage == 'software'
+    - inventory_hostname == groups['rac'][0]
 
-- name: Install Database software (silent mode)
-  command: >
-    /u01/install_packages/database/runInstaller -silent -responseFile /tmp/db_install.rsp
-    -waitforcompletion
+- name: Install RDBMS software (node1; propagates to CLUSTER_NODES)
+  command: >-
+    {{ oracle_media_dir }}/database/runInstaller -silent
+    -responseFile {{ grid_install_tmp }}/db_install.rsp
     -ignorePrereq
+    -waitforcompletion
   become_user: oracle
+  environment:
+    ORACLE_HOSTNAME: "{{ inventory_hostname }}"
+    TMPDIR: "{{ grid_install_tmp }}"
+    LANG: en_US.UTF-8
   register: db_install
-  changed_when: db_install.rc == 0
-  when: not db_installed.stat.exists
+  failed_when: db_install.rc != 0
+  timeout: 5400
+  changed_when: true
+  when:
+    - db_stage == 'software'
+    - not (db_binary.stat.exists | default(false) and db_binary.stat.size | default(0) > 1048576)
+    - inventory_hostname == groups['rac'][0]
 
-- name: Run root.sh for database
-  command: "{{ oracle_home }}/root.sh"
-  become: true
-  when: inventory_hostname == groups['rac'][0] and not db_installed.stat.exists
-  register: db_rootsh_result
-
-- name: Display root.sh output
+- name: Show installer tail (empty list if the task was skipped)
   debug:
-    var: db_rootsh_result.stdout_lines
-  when: inventory_hostname == groups['rac'][0]
+    msg: "{{ (db_install.stderr_lines | default([]))[-10:] }}"
+  when: db_stage == 'software'
 
-- name: Run root.sh on remaining nodes
+# ------------------------------------------------------------------ root.sh
+# Idempotent and cheap (relink/setuid) — run on EVERY node every phase run;
+# a node whose propagation died mid-copy NEEDS the re-run.
+- name: Run {{ oracle_home }}/root.sh on this node
   command: "{{ oracle_home }}/root.sh"
-  become: true
-  when: inventory_hostname != groups['rac'][0] and not db_installed.stat.exists
-  register: db_rootsh_result
+  register: db_rootsh
+  failed_when: db_rootsh.rc != 0
+  timeout: 900
+  changed_when: true
+  when: db_stage == 'root'
 
-- name: Display root.sh output on remaining nodes
+- name: Show root.sh tail
   debug:
-    var: db_rootsh_result.stdout_lines
-  when: inventory_hostname != groups['rac'][0]
+    msg: "{{ (db_rootsh.stdout_lines | default(['(root stage not run here)']))[-8:] }}"
+  when: db_stage == 'root'
 
-- name: Configure listener.ora
-  template:
-    src: listener.ora.j2
-    dest: "{{ oracle_home }}/network/admin/listener.ora"
-    owner: oracle
-    group: "{{ oracle_installer_group }}"
-    mode: '0644'
+# ------------------------------------------------------------------ verify
+- name: Verify bin/oracle on every node (propagation completeness)
+  stat:
+    path: "{{ oracle_home }}/bin/oracle"
+  register: db_bin_check
+  failed_when: >-
+    not db_bin_check.stat.exists or db_bin_check.stat.size < 1048576
+  when: db_stage == 'verify'
 
-- name: Configure tnsnames.ora
+- name: Verify setuid bit on bin/oracle (root.sh ran on THIS node)
+  shell: >-
+    /usr/bin/stat -c '%a %U %G' {{ oracle_home }}/bin/oracle
+  register: setuid_check
+  changed_when: false
+  failed_when: not (setuid_check.stdout.split(' ')[0] is match('67.*'))
+  when: db_stage == 'verify'
+
+- name: Client TNS aliases (SCAN + per-instance; listeners are CRS resources)
   template:
     src: tnsnames.ora.j2
     dest: "{{ oracle_home }}/network/admin/tnsnames.ora"
     owner: oracle
     group: "{{ oracle_installer_group }}"
     mode: '0644'
+  when: db_stage == 'verify'
 
-- name: Start listener
-  command: "{{ oracle_home }}/bin/lsnrctl start"
-  become_user: oracle
-  when: inventory_hostname == groups['rac'][0]
-  changed_when: true
-
-- name: Verify listener is running
-  command: "{{ oracle_home }}/bin/lsnrctl status"
-  become_user: oracle
-  register: listener_status
-  changed_when: false
-  retries: 5
-  delay: 15
-  until: listener_status.rc == 0
-
-- name: Display listener status
-  debug:
-    var: listener_status.stdout_lines
-
-- name: Verify database software installation
+- name: sqlplus version (needs ORACLE_HOME in env or it dies SP2-0667)
   command: "{{ oracle_home }}/bin/sqlplus -version"
   become_user: oracle
-  register: sqlplus_version
+  environment:
+    ORACLE_HOME: "{{ oracle_home }}"
+  register: sqlplus_v
   changed_when: false
+  when: db_stage == 'verify'
 
-- name: Display SQL*Plus version
+- name: Show version
   debug:
-    var: sqlplus_version.stdout_lines
+    msg: "{{ sqlplus_v.stdout | default('(skipped)') }}"
+  when: db_stage == 'verify'

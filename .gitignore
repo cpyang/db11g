@@ -1,7 +1,13 @@
 # Oracle installation packages (large files, need user to download)
 packages/
 
-# Generated shared disks
+# Installation media source for the VMs (11.2.0.4 zips, never committed)
+staging/
+
+# Pinned ansible venv (ansible-core 2.16 for EL7/py3.6 targets)
+.venv-ansible/
+
+# Generated shared disks (legacy — new location: .vagrant/shared_disks/)
 disks/
 
 # Vagrant state

@@ -1,46 +1,53 @@
 # ============================================================
-# Playbook: Install Oracle Grid Infrastructure 11gR2
-# Installs and configures Grid Infrastructure on all RAC nodes
+# Playbook 03 — Oracle Grid Infrastructure 11.2.0.4 install
+# Phases are SEPARATE plays because 11.2 propagates from node1 and
+# root.sh order is a hard requirement (node1 forms the cluster, node2
+# joins it — never both at once).
+# Run: ansible-playbook playbooks/03-install-grid.yml
+# Idempotent: re-running skips completed phases via the stage guards.
 # ============================================================
 
-- name: Install Oracle Grid Infrastructure 11gR2
+- name: GI preflight (media, ASM disks, NIC roles)
   hosts: rac
+  gather_facts: true
   become: true
-  gather_facts: yes
-  serial: 1  # Install on first node, then second
-
-  pre_tasks:
-    - name: Verify OS prerequisites are met
-      command: echo "Checking prerequisites on {{ inventory_hostname }}"
-      changed_when: false
-
-    - name: Ensure Oracle software packages are available
-      stat:
-        path: "{{ oracle_packages_dir }}/{{ oracle_grid_zip }}"
-      register: grid_zip
-
-    - name: Fail if Grid Infrastructure zip is not found
-      fail:
-        msg: "Grid Infrastructure zip file not found at {{ oracle_packages_dir }}/{{ oracle_grid_zip }}. Please place it there first."
-      when: not grid_zip.stat.exists
-
+  vars:
+    grid_stage: check
   roles:
     - grid
 
-  post_tasks:
-    - name: Verify Grid Infrastructure installation
-      command: "{{ grid_home }}/crsctl check crs"
-      register: crs_status
-      changed_when: false
-      failed_when: false
+- name: GI software install (node1; propagates to node2)
+  hosts: rac[0]
+  gather_facts: true
+  become: true
+  vars:
+    grid_stage: software
+  roles:
+    - grid
 
-    - name: Display CRS status
-      debug:
-        var: crs_status.stdout
+- name: root.sh — node1 (starts OCR/Vote + CRS; ~10 min)
+  hosts: rac[0]
+  gather_facts: false
+  become: true
+  vars:
+    grid_stage: root
+  roles:
+    - grid
 
-    - name: Display next steps
-      debug:
-        msg: |
-          Next steps:
-          1. Run 04-install-db.yml to install Database software
-          2. Run 05-create-database.yml to create the database
+- name: root.sh — node2 (joins existing cluster via ConfigNode)
+  hosts: rac[1]
+  gather_facts: false
+  become: true
+  vars:
+    grid_stage: root
+  roles:
+    - grid
+
+- name: DATA + FRA disk groups and cluster verification
+  hosts: rac[0]
+  gather_facts: false
+  become: true
+  vars:
+    grid_stage: dgs
+  roles:
+    - grid

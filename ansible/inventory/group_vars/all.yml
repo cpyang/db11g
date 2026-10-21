@@ -1,104 +1,138 @@
 # ============================================================
-# Oracle 11gR2 RAC - Global Variables (all nodes)
+# Oracle 11.2.0.4 RAC — global variables
 # ============================================================
 
-# Oracle software
+# --- Installation media (host staging/ shared read-only at /u01/staging) ---
+# Media mapping VERIFIED against the zips themselves (2026-10-21):
+#   1of7 + 2of7 -> database/  (RDBMS software)
+#   3of7        -> grid/      (Grid Infrastructure — NOT 1of7!)
+#   4of7-7of7   -> client/gateways/examples/docs — not needed here
+oracle_stage_dir: /u01/staging
+oracle_media_dir: /u01/media
+oracle_grid_zip: "p13390677_112040_Linux-x86-64_3of7.zip"
+oracle_database_zips:
+  - "p13390677_112040_Linux-x86-64_1of7.zip"
+  - "p13390677_112040_Linux-x86-64_2of7.zip"
+
+# --- Software locations ---
 oracle_sw_version: "11.2.0.4"
-oracle_base: "/u01/app/oracle"
-oracle_home: "/u01/app/oracle/product/11.2.0/dbhome_1"
-grid_home: "/u01/app/11.2.0/grid"
-ora_inventory: "/u01/app/oraInventory"
+oracle_base: /u01/app/oracle          # RDBMS base
+grid_base: /u01/app/grid              # GI base (ASM/cmdsrv diag lives here)
+oracle_home: /u01/app/oracle/product/11.2.0/dbhome_1
+grid_home: /u01/app/11.2.0/grid
+ora_inventory: /u01/app/oraInventory
 
-# Oracle users and groups
+# --- Users / groups (fixed GIDs so both nodes agree) ---
+os_groups:
+  oinstall: 5001
+  dba:      5002
+  oper:     5003
+  asmadmin: 5010
+  asmdba:   5011
+  asmoper:  5012
 oracle_installer_group: oinstall
-oracle_oper_group: dba
-oracle_asm_group: asmdba
+oracle_db_group: dba
+oracle_asm_group: asmadmin
+oracle_asm_dba_group: asmdba
 oracle_asm_oper_group: asmoper
-oracle_asm_admin_group: asmadmin
 
-# Passwords (change for production!)
-oracle_password: "oracle"
+# --- Lab passwords (README: change if this ever leaves the laptop) ---
 grid_password: "oracle"
+oracle_password: "oracle"
+asm_monitor_password: "oracle"
+sys_password: "oracle"
+system_password: "oracle"
+dbsnmp_password: "oracle"
 
-# OS packages to install
+# --- OS packages (EL7 names; i686 libs are required by 11.2 link actions) ---
+# NOTE: deliberately NOT using oracle-rdbms-server-11gR2-preinstall — it
+# predates GI-owner separation (no grid/asmadmin model) and its post-script
+# would fight the fixed-GID setup in roles/common. This list was audited
+# against ol7 latest+addons repodata (2026-10-21): fully satisfiable.
 oracle_packages:
-  - oracle-rdbms-server-11gR2-preinstall
   - binutils
+  - compat-libcap1
   - compat-libstdc++-33
   - compat-libstdc++-33.i686
-  - elfutils-libelf
-  - elfutils-libelf-devel
   - gcc
   - gcc-c++
   - glibc
   - glibc.i686
-  - glibc-common
   - glibc-devel
   - glibc-devel.i686
-  - glibc-headers
   - ksh
   - libaio
   - libaio.i686
   - libaio-devel
   - libaio-devel.i686
-  - libgcc
   - libgcc.i686
   - libstdc++
   - libstdc++.i686
   - libstdc++-devel
   - libstdc++-devel.i686
+  - libXext
+  - libXext.i686
+  - libXt
+  - libXt.i686
+  - libX11
+  - libXtst
+  - libXtst.i686
   - make
   - sysstat
   - unixODBC
   - unixODBC-devel
-  - unixODBC.i686
-  - unixODBC-devel.i686
+  # tooling used by bootstrap scripts / installers / CVU
+  - bc
+  - bind-utils
+  - dnsmasq
+  - ntp
+  - unzip
+  - xorg-x11-utils
+  - redhat-lsb-core
 
-# Kernel parameters for Oracle
+# --- Kernel parameters (11.2 RAC checklist) ---
 kernel_parameters:
   fs.aio-max-nr: "1048576"
   fs.file-max: "6815744"
-  kernel.shmall: "2097152"
-  kernel.shmmax: "4294967295"
+  kernel.shmall: "4194304"        # 16 GB * pagesize/4k ceiling; > 8 GB RAM hosts
+  kernel.shmmax: "8589934592"     # half of 16 GB; per-instance SGA headroom
   kernel.shmmni: "4096"
   kernel.sem: "250 32000 100 128"
   net.ipv4.ip_local_port_range: "9000 65500"
   net.core.rmem_default: "262144"
   net.core.rmem_max: "4194304"
   net.core.wmem_default: "262144"
-  net.core.wmem_max: "1048586"
+  net.core.wmem_max: "1048576"
+  vm.overcommit_memory: "1"       # AMM on small VMs dies without this
+  vm.min_free_kbytes: "131072"
 
-# Resource limits for oracle/grid users
+# --- Resource limits ---
 resource_limits:
   oracle:
-    - { item: "soft", type: "nproc", value: "2047" }
-    - { item: "hard", type: "nproc", value: "16384" }
-    - { item: "soft", type: "nofile", value: "1024" }
-    - { item: "hard", type: "nofile", value: "65536" }
-    - { item: "soft", type: "memlock", value: "50000000" }
-    - { item: "hard", type: "memlock", value: "50000000" }
+    - { type: soft, item: nproc, value: 2047 }
+    - { type: hard, item: nproc, value: 16384 }
+    - { type: soft, item: nofile, value: 1024 }
+    - { type: hard, item: nofile, value: 65536 }
+    - { type: soft, item: memlock, value: 5000000 }
+    - { type: hard, item: memlock, value: 5000000 }
   grid:
-    - { item: "soft", type: "nproc", value: "2047" }
-    - { item: "hard", type: "nproc", value: "16384" }
-    - { item: "soft", type: "nofile", value: "1024" }
-    - { item: "hard", type: "nofile", value: "65536" }
-    - { item: "soft", type: "memlock", value: "50000000" }
-    - { item: "hard", type: "memlock", value: "50000000" }
+    - { type: soft, item: nproc, value: 2047 }
+    - { type: hard, item: nproc, value: 16384 }
+    - { type: soft, item: nofile, value: 1024 }
+    - { type: hard, item: nofile, value: 65536 }
+    - { type: soft, item: memlock, value: 5000000 }
+    - { type: hard, item: memlock, value: 5000000 }
 
-# ASM disks (shared storage)
+# --- Shared ASM disks (VBox ASM_SCSI ports 0-2) ---
+# Identity = exact full-disk sector count. Sizes are DISTINCT on purpose:
+# the Vagrantfile refuses to create them if two disks would share a size.
 asm_disks:
-  - name: "OCR_VOTING"
-    device: "/dev/sdb"
-    size_gb: 10
-  - name: "DATA"
-    device: "/dev/sdc"
-    size_gb: 20
-  - name: "FRA"
-    device: "/dev/sdd"
-    size_gb: 10
+  - { label: CRS,  size_gb: 12 }
+  - { label: DATA, size_gb: 20 }
+  - { label: FRA,  size_gb: 10 }
 
-# NTP configuration
-ntp_enabled: true
+# --- NTP ---
 ntp_servers:
-  - "0.centos.pool.ntp.org"
-  - "1.centos.pool.ntp.org"
+  - 0.pool.ntp.org
+  - 1.pool.ntp.org
+  - 2.pool.ntp.org

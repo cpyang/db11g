@@ -1,160 +1,185 @@
 # ============================================================
-# Role: grid
-# Installs Oracle Grid Infrastructure 11gR2
+# Role: grid — Oracle Grid Infrastructure 11.2.0.4 (media: 3of7!)
+#
+# Install model (11.2.0.4): runInstaller runs on node1 ONLY and
+# PROPAGATES the home to the other cluster nodes over the grid user's
+# ssh trust — unlike the 19c lab's per-node path. That makes this role's
+# phases strictly ordered:
+#   stage=check     all nodes: media + ASM symlinks present
+#   stage=software  node1: unzip media, generate rsp, runInstaller
+#   stage=root      per node in order: root.sh (node1 starts CRS, node2
+#                   joins — NEVER both at once)
+#   stage=dgs       node1: asmca creates DATA + FRA (CRS dg came from the
+#                   installer — OCR/voting live in it)
 # ============================================================
 
-- name: Check if Grid Infrastructure is already installed
+- name: Default stage
+  set_fact:
+    grid_stage: "{{ grid_stage | default('check') }}"
+
+# ------------------------------------------------------------------ check
+- name: Resolve NIC roles (needed by the rsp even on standalone runs)
+  include_role:
+    name: common
+    tasks_from: resolve-interfaces
+  when: grid_stage == 'check'
+
+- name: Confirm media is mounted read-only at {{ oracle_stage_dir }}
+  stat:
+    path: "{{ oracle_stage_dir }}/{{ oracle_grid_zip }}"
+  register: grid_media
+  failed_when: not grid_media.stat.exists
+  when: grid_stage == 'check'
+
+- name: Confirm ASM discovery symlinks exist
+  stat:
+    path: "/dev/oracleasm/disks/{{ item }}"
+  loop: [CRS, DATA, FRA]
+  register: asm_links
+  failed_when: not asm_links.stat.exists
+  when: grid_stage == 'check'
+
+# ------------------------------------------------------------------ software
+- name: Detect existing GI home
   stat:
     path: "{{ grid_home }}/bin/crsctl"
-  register: grid_installed
+  register: crsctl_bin
+  when: grid_stage == 'software'
 
-- name: Skip Grid installation if already installed
-  debug:
-    msg: "Grid Infrastructure already installed on {{ inventory_hostname }}. Skipping."
-  when: grid_installed.stat.exists
-
-- name: Create Oracle software directories
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: grid
-    group: "{{ oracle_installer_group }}"
-    mode: '0755'
-  loop:
-    - "{{ grid_home }}"
-    - "{{ grid_home }}/stage"
-    - "/u01/install_logs/grid"
-
-- name: Extract Grid Infrastructure software
+- name: Unarchive Grid Infrastructure media (node1; installer propagates)
   unarchive:
-    src: "{{ oracle_packages_dir }}/{{ oracle_grid_zip }}"
-    dest: "{{ grid_home }}/stage"
+    src: "{{ oracle_stage_dir }}/{{ oracle_grid_zip }}"
+    dest: "{{ oracle_media_dir }}"
+    remote_src: true
     owner: grid
     group: "{{ oracle_installer_group }}"
-    mode: '0755'
   become_user: grid
-  when: not grid_installed.stat.exists
+  when:
+    - grid_stage == 'software'
+    - not crsctl_bin.stat.exists
+    - inventory_hostname == groups['rac'][0]
 
-- name: Copy Grid response file
+- name: Render grid_install.rsp
   template:
     src: grid.rsp.j2
-    dest: /tmp/grid_install.rsp
+    dest: "{{ grid_install_tmp }}/grid_install.rsp"
     owner: grid
     group: "{{ oracle_installer_group }}"
-    mode: '0644'
+    mode: '0600'      # contains ASM monitor/sys passwords
+  when: grid_stage == 'software'
 
-- name: Install Grid Infrastructure (silent mode)
-  command: >
-    {{ grid_home }}/stage/grid/runInstaller -silent -responseFile /tmp/grid_install.rsp
-    -waitforcompletion
+# 11.2.0.4 runInstaller returns 0 on success; non-zero here is a real abort.
+# -ignorePrereq accepts CVU WARNINGS — do not use this run to paper over
+# FAILURES; check the log below if it dies.
+- name: Install GI software + configure cluster (node1 only, long-running)
+  command: >-
+    {{ oracle_media_dir }}/grid/runInstaller -silent
+    -responseFile {{ grid_install_tmp }}/grid_install.rsp
     -ignorePrereq
+    -waitforcompletion
   become_user: grid
-  register: grid_install
-  changed_when: grid_install.rc == 0
-  when: not grid_installed.stat.exists
+  environment:
+    ORACLE_HOSTNAME: "{{ inventory_hostname }}"
+    TMPDIR: "{{ grid_install_tmp }}"
+    LANG: en_US.UTF-8
+  register: gi_install
+  failed_when: gi_install.rc != 0
+  timeout: 5400
+  changed_when: true
+  when:
+    - grid_stage == 'software'
+    - not crsctl_bin.stat.exists
+    - inventory_hostname == groups['rac'][0]
 
-- name: Run root.sh on first node
+- name: Show installer tail (empty list if the task was skipped)
+  debug:
+    msg: "{{ (gi_install.stderr_lines | default([]))[-10:] }}"
+  when: grid_stage == 'software'
+
+# ------------------------------------------------------------------ root.sh
+- name: Check whether CRS is already up on this node
+  command: "{{ grid_home }}/bin/crsctl check crs"
+  register: crs_up
+  failed_when: false
+  changed_when: false
+  when: grid_stage == 'root'
+
+- name: Run /u01/app/11.2.0/grid/root.sh (as root — do this node1 FIRST)
   command: "{{ grid_home }}/root.sh"
-  become: true
-  when: inventory_hostname == groups['rac'][0] and not grid_installed.stat.exists
-  register: rootsh_result
+  register: gi_rootsh
+  failed_when: gi_rootsh.rc != 0
+  timeout: 3600
+  changed_when: true
+  when:
+    - grid_stage == 'root'
+    - crs_up.rc != 0
 
-- name: Display root.sh output
+- name: Show root.sh tail
   debug:
-    var: rootsh_result.stdout_lines
-  when: inventory_hostname == groups['rac'][0]
+    msg: "{{ (gi_rootsh.stdout_lines | default(['(root.sh skipped — CRS already online on this node)']))[-12:] }}"
+  when: grid_stage == 'root'
 
-- name: Run root.sh on remaining nodes
-  command: "{{ grid_home }}/root.sh"
-  become: true
-  when: inventory_hostname != groups['rac'][0] and not grid_installed.stat.exists
-  register: rootsh_result
-
-- name: Display root.sh output on remaining nodes
-  debug:
-    var: rootsh_result.stdout_lines
-  when: inventory_hostname != groups['rac'][0]
-
-- name: Wait for Grid Infrastructure to stabilize
-  command: "{{ grid_home }}/crsctl check crs"
-  register: crs_check
+# ------------------------------------------------------------------ DGs
+# Existence MUST be parsed from `crsctl stat res -t` output — both
+# `asmcmd dg_exists` and `crsctl stat res <dg> -p` return rc 0 for absent
+# disk groups (verified 2026-10-15/19 in the sibling lab). Do not "simplify"
+# these guards back to rc checks.
+- name: Read cluster resource table
+  command: "{{ grid_home }}/bin/crsctl stat res -t"
+  become_user: grid
+  register: res_table
   changed_when: false
-  retries: 5
-  delay: 30
-  until: crs_check.rc == 0
+  when:
+    - grid_stage == 'dgs'
+    - inventory_hostname == groups['rac'][0]
 
-- name: Verify Grid Infrastructure installation
-  command: "{{ grid_home }}/crsctl check cluster"
-  register: cluster_check
-  changed_when: false
-  retries: 5
-  delay: 30
-  until: cluster_check.rc == 0
+- name: Create DATA disk group
+  command: >-
+    {{ grid_home }}/bin/asmca -silent -createDiskGroup
+    -diskGroupName DATA
+    -disk '/dev/oracleasm/disks/DATA'
+    -redundancy EXTERNAL -au_size 4
+    -compatible.asm 11.2 -compatible.rdbms 11.2
+  become_user: grid
+  environment:
+    ORACLE_HOME: "{{ grid_home }}"
+    ORACLE_SID: "+ASM{{ node_num }}"
+  when:
+    - grid_stage == 'dgs'
+    - inventory_hostname == groups['rac'][0]
+    - res_table.stdout is not search('ora\\.data\\.dg')
 
-- name: Display cluster status
-  debug:
-    var: cluster_check.stdout_lines
+- name: Create FRA disk group
+  command: >-
+    {{ grid_home }}/bin/asmca -silent -createDiskGroup
+    -diskGroupName FRA
+    -disk '/dev/oracleasm/disks/FRA'
+    -redundancy EXTERNAL -au_size 4
+    -compatible.asm 11.2 -compatible.rdbms 11.2
+  become_user: grid
+  environment:
+    ORACLE_HOME: "{{ grid_home }}"
+    ORACLE_SID: "+ASM{{ node_num }}"
+  when:
+    - grid_stage == 'dgs'
+    - inventory_hostname == groups['rac'][0]
+    - res_table.stdout is not search('ora\\.fra\\.dg')
 
-- name: Configure ASM disks
-  command: "oracleasm createdisk {{ item.name }} {{ item.device }}"
-  loop: "{{ asm_disks }}"
-  become: true
-  when: inventory_hostname == groups['rac'][0]
-
-- name: Configure ASM disks on all nodes
-  command: "oracleasm scandisks"
-  become: true
-  when: inventory_hostname != groups['rac'][0]
-
-- name: List ASM disks
-  command: "oracleasm listdisks"
-  become: true
-  register: asm_disks_list
-  changed_when: false
-
-- name: Display ASM disks
-  debug:
-    var: asm_disks_list.stdout_lines
-
-- name: Create ASM disk group (DATA)
-  command: >
-    {{ grid_home }}/bin/sqlplus / as sysasm << 'SQL'
-    CREATE DISKGROUP DATA EXTERNAL REDUNDANCY
-    DISK '/dev/oracleasm/disks/OCR_VOTING', '/dev/oracleasm/disks/DATA'
-    ATTRIBUTE 'compatible.asm' = '11.2', 'compatible.rdbms' = '11.2';
-    SQL
-  when: inventory_hostname == groups['rac'][0]
-  changed_when: false
-
-- name: Create ASM disk group (FRA)
-  command: >
-    {{ grid_home }}/bin/sqlplus / as sysasm << 'SQL'
-    CREATE DISKGROUP FRA EXTERNAL REDUNDANCY
-    DISK '/dev/oracleasm/disks/FRA'
-    ATTRIBUTE 'compatible.asm' = '11.2', 'compatible.rdbms' = '11.2';
-    SQL
-  when: inventory_hostname == groups['rac'][0]
-  changed_when: false
-
-- name: Verify ASM disk groups
-  command: "{{ grid_home }}/bin/asmcmd lsdg"
-  register: asmcmd_result
-  changed_when: false
-  when: inventory_hostname == groups['rac'][0]
-
-- name: Display ASM disk groups
-  debug:
-    var: asmcmd_result.stdout_lines
-  when: inventory_hostname == groups['rac'][0]
-
-- name: Verify final cluster status
-  command: "{{ grid_home }}/crsctl stat res -t"
-  register: final_status
-  changed_when: false
+- name: Final cluster verification
+  shell: >-
+    {{ grid_home }}/bin/crsctl check cluster -all &&
+    {{ grid_home }}/bin/olsnodes -n -s
+  become_user: grid
+  register: cluster_ok
   retries: 10
   delay: 30
-  until: final_status.rc == 0
+  until: cluster_ok.rc == 0
+  changed_when: false
+  when:
+    - grid_stage == 'dgs'
+    - inventory_hostname == groups['rac'][0]
 
-- name: Display final cluster status
+- name: Cluster status
   debug:
-    var: final_status.stdout_lines
+    msg: "{{ cluster_ok.stdout_lines | default(['(dgs stage not run on this node)']) }}"
+  when: grid_stage == 'dgs'

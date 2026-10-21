@@ -1,0 +1,44 @@
+# Resolve NIC roles BY ADDRESS (never by ethX — the Vagrant box has
+# eth0 = NAT first). Included by roles/common and by the grid role's
+# check stage (so a standalone `--tags`/stage run can still render rsp files).
+- set_fact:
+    _iface_map: "{{ ansible_facts['ansible_interface_facts'] }}"
+
+- name: Find public interface
+  set_fact:
+    pub_iface: "{{ item }}"
+  loop: "{{ ansible_interfaces }}"
+  when: >-
+    _iface_map[item].ipv4 is defined and
+    _iface_map[item]['ipv4']['address'] == public_ip
+
+- name: Find interconnect interface
+  set_fact:
+    priv_iface: "{{ item }}"
+  loop: "{{ ansible_interfaces }}"
+  when: >-
+    _iface_map[item].ipv4 is defined and
+    _iface_map[item]['ipv4']['address'] == private_ip
+
+- name: Find remaining addressed NIC (NAT) — response files mark it 'do not use'
+  set_fact:
+    nat_iface: "{{ item }}"
+    nat_subnet: "{{ _iface_map[item]['ipv4']['network'] }}"
+  loop: "{{ ansible_interfaces }}"
+  when: >-
+    _iface_map[item].ipv4 is defined and
+    _iface_map[item]['ipv4'].get('address') is defined and
+    _iface_map[item]['ipv4']['address'] not in [public_ip, private_ip] and
+    nat_iface is not defined
+
+- name: Assert interfaces resolved
+  assert:
+    that:
+      - pub_iface is defined
+      - priv_iface is defined
+    fail_msg: >-
+      No NIC carries {{ public_ip }} / {{ private_ip }}. Vagrant applies
+      private_network IPs only on the FIRST boot — if these VMs were
+      recreated over existing media, the NICs are unaddressed: halt, check
+      `ip addr` in the guest, `vagrant destroy && vagrant up` if VM state
+      was replaced (or re-add the static config per the playbook docs).

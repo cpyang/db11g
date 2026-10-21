@@ -1,0 +1,16 @@
+# .bash_profile — managed by Ansible (user: {{ profile_sid }} env)
+if [ -f /etc/profile ]; then . /etc/profile; fi
+
+export ORACLE_BASE={{ profile_base }}
+export ORACLE_HOME={{ profile_home }}
+export ORACLE_SID={{ profile_sid }}
+export PATH=$ORACLE_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$ORACLE_HOME/lib:/usr/lib
+
+# GI/ASM instances are +ASM<n>; srvctl/crsctl live in the GI home.
+export GRID_HOME={{ grid_home }}
+
+PS1='[\u@\h \W]\$ '
+export PS1
+
+umask 022

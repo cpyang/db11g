@@ -1,48 +1,26 @@
 # ============================================================
-# Playbook: Configure OS for Oracle 11gR2 RAC
-# This playbook configures the operating system on all RAC nodes
+# Playbook 01 — OS preparation for 11.2.0.4 RAC (idempotent)
+# Run: ansible-playbook playbooks/01-configure-os.yml
 # ============================================================
 
-- name: Configure OS prerequisites for Oracle 11gR2 RAC
+- name: Configure OS prerequisites for Oracle 11.2.0.4 RAC
   hosts: rac
+  gather_facts: true
   become: true
-  gather_facts: yes
-  serial: 1  # Configure nodes one at a time to avoid race conditions
-
-  pre_tasks:
-    - name: Verify minimum system requirements
-      local_action:
-        module: debug
-        msg: "Configuring {{ inventory_hostname }} ({{ ansible_distribution }} {{ ansible_distribution_version }})"
-
-    - name: Update system packages
-      yum:
-        name: '*'
-        state: latest
-        exclude: kernel*
-      register: yum_update
-      retries: 3
-      delay: 10
-
-    - name: Reboot if kernel updated
-      reboot:
-        reboot_timeout: 300
-      when: yum_update is changed and yum_update.reboot_required | default(false)
 
   roles:
     - common
 
   post_tasks:
-    - name: Verify Oracle prerequisites are met
-      local_action:
-        module: debug
-        msg: "OS configuration complete for {{ inventory_hostname }}"
-
-    - name: Display next steps
+    - name: Environment summary
       debug:
-        msg: |
-          Next steps:
-          1. Configure shared storage (ASM disks)
-          2. Install Grid Infrastructure
-          3. Install Database Software
-          4. Create Database
+        msg: >-
+          {{ inventory_hostname }}: RAM={{ ansible_memtotal_mb }}MB
+          swap={{ ansible_swaptotal_mb }}MB
+          public={{ pub_iface }}/{{ public_ip }}
+          interconnect={{ priv_iface }}/{{ private_ip }}
+
+    - name: Remind about the once-per-cluster reboot (SELinux enforcement)
+      debug:
+        msg: "If SELinux was enforcing at first boot, reboot nodes before 02."
+      run_once: true

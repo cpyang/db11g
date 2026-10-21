@@ -1,314 +1,244 @@
-# Oracle Database 11gR2 RAC Testing Environment
+# Oracle Database 11.2.0.4 RAC Lab Environment (Vagrant + VirtualBox + Ansible)
 
-> Automated two-node Oracle RAC cluster setup using Vagrant, VirtualBox, and Ansible.
+> Two-node Oracle 11.2.0.4 RAC on one workstation: Vagrant manages the VMs,
+> host-side Ansible drives every Oracle installation step.
 
 ## Overview
 
-This project provisions a **2-node Oracle Database 11gR2 RAC (Real Application Clusters)** testing environment on your local machine. It uses:
+- **Vagrant + VirtualBox** — VM lifecycle, host-only networking, shared VDIs
+- **Ansible (host-driven)** — OS prep, ASM disks, silent GI/DB installs, dbca
+- **staging/** read-only shared folder as the sole installation source
 
-- **Vagrant + VirtualBox** for VM provisioning
-- **Ansible** for OS configuration and Oracle software installation
-- **Silent installation** (response files) for unattended Oracle setup
+**Nothing installs during `vagrant up`.** Vagrant only boots the two nodes
+and runs the tiny bootstrap/swap scripts; every Oracle phase is an explicit
+`ansible-playbook` run from the host. That keeps long installer sessions
+re-attachable and re-runnable per phase.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Host Machine                         │
-│                                                         │
-│  ┌──────────────┐    ┌──────────────┐                   │
-│  │   Node 1     │    │   Node 2     │                   │
-│  │  db11g-rac1  │    │  db11g-rac2  │                   │
-│  │              │    │              │                   │
-│  │ 192.168.56.11│    │ 192.168.56.12│                   │
-│  │ 10.10.10.11  │    │ 10.10.10.12  │                   │
-│  │ 192.168.56.1 │    │ 192.168.56.2 │                   │
-│  └──────────────┘    └──────────────┘                   │
-│         │                    │                          │
-│         └────────┬───────────┘                          │
-│                  │                                      │
-│          Shared Storage (VirtualBox)                    │
-│          ASM disks for clusterware + database           │
-└─────────────────────────────────────────────────────────┘
+ db11g-rac1.db11g.lab                     db11g-rac2.db11g.lab
+ 192.168.86.11 / 10.90.90.11              192.168.86.12 / 10.90.90.12
+ vip 192.168.86.101                       vip 192.168.86.102
+        \                                        /
+     ASM_SCSI shared VDIs (Fixed + shareable)   /
+   db11g_crs.vdi 12G | db11g_data.vdi 20G | db11g_fra.vdi 10G
+                SCAN: db11g-scan = 192.168.86.100
 ```
 
-### Node Naming Convention
+### Node addressing
 
 | Component | Node 1 | Node 2 |
 |-----------|--------|--------|
-| Public IP | 192.168.56.11 | 192.168.56.12 |
-| Private IP | 10.10.10.11 | 10.10.10.12 |
-| Virtual IP | 192.168.56.101 | 192.168.56.102 |
-| SCAN IP | 192.168.56.100 | (shared) |
-| Scan Listener Port | 1521 | - |
-| Oracle SID prefix | rac | rac1, rac2 |
+| Hostname (FQDN) | db11g-rac1.db11g.lab | db11g-rac2.db11g.lab |
+| Public IP | 192.168.86.11 | 192.168.86.12 |
+| Private IP (interconnect) | 10.90.90.11 | 10.90.90.12 |
+| Virtual IP | 192.168.86.101 | 192.168.86.102 |
+| SCAN | 192.168.86.100 (`db11g-scan`, single) | shared |
+| RAM / vCPU | 6 GB / 2 | 6 GB / 2 |
 
-### Storage Layout
+> **Why not 192.168.56.x / 10.10.10.x?** Those ranges belong to the 19c RAC
+> lab (`oracle_dr_on_aws/tests`) that runs on the same hosts. Reusing them
+> produces two VMs with identical IPs — the ARP layer will not warn you.
+> Keep the ranges apart.
 
-| Disk | Size | Purpose |
-|------|------|---------|
-| `/dev/sdb` | 10 GB | Oracle Grid Infrastructure (OCR + Voting Disk) |
-| `/dev/sdc` | 20 GB | ASM disk group for database files (DATA) |
-| `/dev/sdd` | 10 GB | ASM disk group for flash recovery (FRA) |
+The interconnect is a VirtualBox **internal network** (`db11g-priv-net`):
+the fastest private path, no host vboxnet needed. eth0 in-guest is
+Vagrant's NAT (internet for yum/NTP); the two `private_network` lines
+become eth1/eth2 in first-boot order. NIC roles are resolved **by
+address** at runtime — never trust an `ethX` in a config here.
+
+### Storage layout
+
+| VDI | Size | ASM label → disk group | Contents |
+|-----|------|------------------------|----------|
+| `db11g_crs.vdi` | **12 GB** | `/dev/oracleasm/disks/CRS` → **CRS** | OCR + voting files (installer-placed) |
+| `db11g_data.vdi` | **20 GB** | `/dev/oracleasm/disks/DATA` → **DATA** | database files |
+| `db11g_fra.vdi` | **10 GB** | `/dev/oracleasm/disks/FRA` → **FRA** | recovery area (8 GB cap) |
+| `db11g-racN-swap.vdi` | 6 GB | (not ASM) | swap — CVU wants swap ≈ RAM |
+
+The three shared sizes are **deliberately distinct**: guests identify disks
+by exact sector count (VBox disks expose no serial; letters drift). VDIs
+live in `.vagrant/shared_disks/` and are created **Fixed + shareable** —
+VirtualBox 7 refuses `--mtype shareable` on dynamic media, so legacy
+dynamic `disks/*.vdi` files from the old Vagrantfile are unusable (the
+Vagrantfile now aborts with instructions if it meets one). All redundancy
+is EXTERNAL (lab: no mirroring).
+
+## Installation media — `staging/`
+
+The Vagrantfile maps host `staging/` into both guests **read-only** at
+`/u01/staging` (VirtualBox shared folder; nothing is rsync'd — the default
+`/vagrant` sync is disabled so the 5 GB of zips never copy into guests).
+
+This lab installs from the **11.2.0.4 patch-set media** (downloadable with
+a free OTN account — search MyOracleSupport for patch **13390677**):
+
+| File | Role | Needed here |
+|------|------|-------------|
+| `p13390677_112040_Linux-x86-64_1of7.zip` | RDBMS part 1 | ✅ |
+| `p13390677_112040_Linux-x86-64_2of7.zip` | RDBMS part 2 | ✅ |
+| `p13390677_112040_Linux-x86-64_3of7.zip` | **Grid Infrastructure** | ✅ |
+| `…_4of7…7of7.zip` | client / gateways / examples / docs | ❌ (harmless) |
+
+> ⚠️ Media mapping verified against the archives themselves: the GI
+> installer is in **3of7**, NOT 1of7 (`1of7`+`2of7` = `database/` only).
+> `ansible/reference/*.rsp.orig` were extracted from these zips and are the
+> ground truth for response-file keys.
+
+Software lands on node1 at `/u01/media/` (unzipped from the mount, ~13 GB —
+the 50 GB root disk absorbs it), and 11.2 installers **propagate** homes to
+node2 themselves.
 
 ## Prerequisites
 
-### On Host Machine
+| Software | Version | Notes |
+|----------|---------|-------|
+| VirtualBox | ≥ 7.0 | fixed+shareable VDIs, internal net |
+| Vagrant | ≥ 2.3 | box `oraclelinux/7` (virtualbox provider) |
+| Ansible | **ansible-core 2.16.x pinned venv** | see below |
 
-| Software | Minimum Version | Purpose |
-|----------|----------------|---------|
-| VirtualBox | 6.1+ | Hypervisor |
-| Vagrant | 2.3+ | VM lifecycle management |
-| Ansible | 2.9+ | Configuration management |
-| Oracle Linux 7 box | - | Official Oracle Linux 7 vagrant box (see Quick Start) |
-| Oracle 11gR2 software | - | Two zip files: `linux.x64_11gR2_database_1of2.zip`, `linux.x64_11gR2_database_2of2.zip` |
-
-### Resource Requirements
-
-| Resource | Per Node | Total |
-|----------|----------|-------|
-| CPU | 2 vCPUs | 4 vCPUs |
-| RAM | 4 GB | 8 GB |
-| Disk (OS) | 20 GB | 40 GB |
-| Shared Disks | - | 40 GB |
-
-> **Note:** Minimum system RAM should be 12 GB to run both nodes comfortably. 16 GB recommended.
-
-## Quick Start
-
-### 1. Clone this repository
+**Ansible version is load-bearing.** System ansible-core ≥ 2.17 dropped
+Python 3.6 target support — EL7 only ships 3.6, so 2.17+ connects and then
+dies on module execution. Create the venv once:
 
 ```bash
-git clone <repository-url>
-cd oracle-rac-vagrant
+python3.12 -m venv .venv-ansible          # 2.16 needs controller ≤ 3.12
+source .venv-ansible/bin/activate
+pip install 'ansible-core==2.16.*'
 ```
 
-### 2. Place Oracle installation files
+(11g also links with `make 3.82`; EL7's base-repo make is exactly that —
+another reason this lab stays on OL7, not OL8.)
+
+## Quick start
 
 ```bash
-# Download from Oracle Technology Network
-# https://www.oracle.com/database/technologies/oracle11g-linux-downloads.html
-
-mkdir -p packages
-# Place these files in the packages directory:
-#   - linux.x64_11gR2_database_1of2.zip
-#   - linux.x64_11gR2_database_2of2.zip
-```
-
-### 3. Provision the cluster
-
-```bash
-# Bring up both nodes (this runs initial bootstrap only)
-vagrant up
-
-# Or provision step by step
-vagrant up db11g-rac1
+cd ~/src/db11g
+vagrant up db11g-rac1          # node1 FIRST (it owns cluster formation)
 vagrant up db11g-rac2
+
+cd ansible && source ../.venv-ansible/bin/activate
+ansible-playbook playbooks/01-configure-os.yml        # OS/users/DNS/trust
+ansible-playbook playbooks/02-configure-cluster.yml   # ASM disks, probes
+ansible-playbook playbooks/03-install-grid.yml        # GI + root.sh + DGs  (~45 min)
+ansible-playbook playbooks/04-install-db.yml          # RDBMS software      (~40 min)
+ansible-playbook playbooks/05-create-db.yml           # dbca RAC database   (~45 min)
 ```
 
-### 4. Run Ansible provisioning
+Playbook phases are idempotent and stage-guarded: re-running a phase skips
+completed work (`crsctl` present, `bin/oracle` size, DG visible in
+`crsctl stat res -t`). root.sh phases always run node1 before node2 — do
+not remove the play ordering.
+
+Before the **first** real run of 05, sanity-check the dbca flags on the VM:
+`vagrant ssh db11g-rac1 -c "sudo -u oracle /u01/app/oracle/product/11.2.0/dbhome_1/bin/dbca -createDatabase -help"`.
+
+### Verify
 
 ```bash
-# Run Ansible playbook to configure OS and install Oracle
-./vagrant/scripts/ansible-provision.sh
-```
-
-This script uses `vagrant ssh-config` to generate SSH configuration and runs the Ansible playbook with it.
-
-### 5. Verify the installation
-
-```bash
-# SSH into a node
 vagrant ssh db11g-rac1
-
-# Check Oracle processes
-ps -ef | grep pmon
-
-# Check ASM disks
-su - grid
-asmcmd lsdg
-
-# Check listener status
-lsnrctl status
-
-# Check cluster status
-crsctl check cluster
-crsctl stat res -t
+sudo -u grid /u01/app/11.2.0/grid/bin/crsctl check cluster -all
+sudo -u grid /u01/app/11.2.0/grid/bin/olsnodes -n -s
+sudo -u grid /u01/app/11.2.0/grid/bin/crsctl query css votedisk
+sudo -u grid /u01/app/11.2.0/grid/bin/ocrcheck
+sudo -u grid asmcmd lsdg                      # CRS, DATA, FRA mounted
+srvctl status database -d rac                  # rac1 + rac2 running
 ```
 
-## Project Structure
+## Project structure
 
 ```
-oracle-rac-vagrant/
-├── README.md                      # This file
-├── Vagrantfile                    # VM definitions and provisioning
+db11g/
+├── Vagrantfile                  # VMs, shared VDIs (Fixed+shareable), staging mount
+├── staging/                     # 11.2.0.4 zips (gitignored) — the install source
 ├── ansible/
-│   ├── ansible.cfg                # Ansible configuration
+│   ├── ansible.cfg              # inventory + roles_path (run from ansible/)
 │   ├── inventory/
-│   │   ├── hosts                  # Inventory file
-│   │   └── group_vars/
-│   │       ├── all.yml            # Variables for all nodes
-│   │       └── rac.yml            # Variables for RAC nodes
-│   ├── playbooks/
-│   │   ├── 01-configure-os.yml    # OS hardening and packages
-│   │   ├── 02-configure-cluster.yml # Clusterware prerequisites
-│   │   ├── 03-install-grid.yml    # Grid Infrastructure installation
-│   │   └── 04-install-db.yml      # Database software installation
+│   │   ├── hosts                # FQDN hosts, per-node IPs, machine keys
+│   │   └── group_vars/          # all.yml (OS/media), rac.yml (cluster/db)
+│   ├── playbooks/               # 01 os → 02 cluster → 03 grid → 04 db → 05 dbca
 │   ├── roles/
-│   │   ├── common/
-│   │   │   ├── tasks/
-│   │   │   │   └── main.yml
-│   │   │   ├── templates/
-│   │   │   │   ├── 99-oracle.yaml.j2
-│   │   │   │   ├── limits.conf.j2
-│   │   │   │   ├── oracle-params.j2
-│   │   │   │   └── hosts.j2
-│   │   │   └── handlers/
-│   │   │       └── main.yml
-│   │   ├── grid/
-│   │   │   ├── tasks/
-│   │   │   │   └── main.yml
-│   │   │   └── templates/
-│   │   │       └── grid.rsp.j2
-│   │   └── database/
-│   │       ├── tasks/
-│   │       │   └── main.yml
-│   │       └── templates/
-│   │           └── db_install.rsp.j2
-│   └── scripts/
-│       ├── share-oracle.sh        # Share Oracle packages with VMs
-│       └── setup-shared-disks.sh  # Prepare shared ASM disks
-├── packages/                      # Oracle installation files
-│   ├── linux.x64_11gR2_database_1of2.zip
-│   └── linux.x64_11gR2_database_2of2.zip
-└── vagrant/
-    └── scripts/
-        ├── bootstrap.sh           # Initial VM bootstrap
-        └── ansible-provision.sh   # Ansible provisioning script
+│   │   ├── common/              # users, limits, sysctl, hosts, dnsmasq, ssh trust
+│   │   ├── storage/             # ASM disk discovery + udev symlinks
+│   │   ├── grid/                # GI install (stages: check|software|root|dgs)
+│   │   └── database/            # RDBMS install (stages: check|software|root|verify)
+│   ├── scripts/asm_setup.sh     # size-keyed partitioning + udev rules (idempotent)
+│   └── reference/               # media response templates (ground truth)
+└── vagrant/scripts/
+    ├── bootstrap.sh             # EL7-minimal: SELinux off, firewalld off, python3
+    └── swap_setup.sh            # 6 GB swap VDI → GPT partition + fstab (run:always)
 ```
 
-## What Gets Configured
+Retired by this revision: root `ansible.cfg` (wrong roles_path),
+`vagrant/scripts/ansible-provision.sh` (host commands run in-guest),
+`packages/` and `disks/` (superseded by `staging/` and
+`.vagrant/shared_disks/`).
 
-### Operating System (Ansible)
+## What gets configured
 
-- **User & groups**: `oracle`, `grid` with proper passwordless SSH
-- **Kernel parameters**: `/etc/sysctl.conf` for Oracle requirements
-- **Resource limits**: `/etc/security/limits.conf` for oracle/grid users
-- **Packages**: gcc, make, binutils, compat-lib*, etc.
-- **Directories**: `/u01`, `/u02` with proper ownership
-- **Hosts file**: Static entries for all cluster nodes
-- **Time synchronization**: NTP configuration
+### OS (`common`)
+- `grid` (GI owner; **not** in dba) + `oracle` users, fixed-GID groups, NOPASSWD sudo
+- limits via drop-in (`/etc/security/limits.d`), sysctl (incl.
+  `vm.overcommit_memory=1`, required for AMM on small VMs), THP off via systemd unit
+- `/etc/hosts` (public/vip/priv/scan) + **dnsmasq** serving the zone — 11.2's
+  SCAN prereq wants real DNS; hosts-only trips CVU PRVF-11826. `PEERDNS=no`
+  protects `/etc/resolv.conf` from the NAT interface's DHCP.
+- SSH trust for **oracle and grid**, every node incl. self, as **classic PEM
+  keys** (`ssh-keygen -m PEM`) — the 11.2 installer's built-in Java ssh
+  cannot read OpenSSH-format keys and fails with "invalid privatekey"
+  while everything looks fine from a shell.
 
-### Grid Infrastructure
+### Cluster (`02`)
+- Shared VDIs: wipe + GPT-partition (node1 only) + udev symlinks
+  `/dev/oracleasm/disks/{CRS,DATA,FRA}` keyed by **partition sector size**
+- Per-hop BatchMode ssh probes + SCAN resolution probe (fail early, not in CVU)
 
-- Oracle Grid Infrastructure 11gR2 installation
-- ASM disk group configuration (DATA, FRA)
-- OCR and Voting Disk setup
-- Cluster verification
+### Grid (`03`)
+- `runInstaller -silent` from `/u01/media/grid` with the media-format rsp
+- OCR/voting into the CRS disk group (EXTERNAL); DATA+FRA created after
+  root.sh via `asmca -silent`
+- root.sh node1 → node2; verified with `crsctl check cluster -all` + `olsnodes`
 
-### Database Software
-
-- Oracle Database 11gR2 software installation
-- Oracle Net configuration (listener.ora, tnsnames.ora)
-
-## Customization
-
-### Change Node Resources
-
-Edit the `Vagrantfile` and modify:
-
-```ruby
-config.vm.define "db11g-rac1" do |node|
-  node.vm.provider "virtualbox" do |vb|
-    vb.memory = "4096"    # Change this
-    vb.cpus = 2            # Change this
-  end
-end
-```
-
-### Change Network
-
-Modify the network configuration in `Vagrantfile`:
-
-```ruby
-config.vm.network "private_network", type: "dhcp"  # Use DHCP instead of static
-```
-
-### Add More Nodes
-
-Duplicate the node definition in `Vagrantfile` and update the inventory file.
+### Database (`04`/`05`)
+- software-only EE install with `CLUSTER_NODES` = both nodes (a blank list
+  does **not** auto-propagate — the remote home keeps a 0-byte `bin/oracle`)
+- `$OH/root.sh` on both nodes; verify = bin/oracle size + setuid mode
+- dbca create (node1) → `-addInstance` (node2) → FRA + 2×OPEN check
 
 ## Troubleshooting
 
-### Common Issues
+| Symptom | Cause / fix |
+|---------|-------------|
+| Vagrantfile aborts: "DYNAMIC media" | legacy `disks/*.vdi` — confirm unattached/empty (`showmediuminfo`, `Machine:` blank), delete, re-up |
+| all modules fail right after connect | system ansible ≥ 2.17 on EL7 targets — activate the pinned venv |
+| ASM disk not visible to installer | rerun `02`; check `blockdev --rereadpt` + `udevadm test`; never hand-map `/dev/sdX` |
+| root.sh node2 `PRKC-1168 "AUTO"` | VIPs must be static: keep `autoConfigureClusterNodeVIP=false` + hosts entries |
+| installer log "Failed to add identity file … invalid privatekey" | keys not classic PEM — rerun `01` |
+| scan ORA-00141 / listeners "support no services" | dnsmasq down or bound to wrong NIC — `systemctl status dnsmasq`, `nslookup db11g-scan 127.0.0.1` |
+| CVU PRVF-11826 (empty DNS set) | `/etc/resolv.conf` rewritten by DHCP — `PEERDNS=no` + rerun `01` |
+| CRS broken after host reboot | bring up node1, wait for CRS online, then node2 (shared VDI lock order) |
 
-| Issue | Solution |
-|-------|----------|
-| Shared disks not visible | Ensure VirtualBox has permission to access host storage |
-| Oracle install fails | Check `/u01/install_logs/` on each node |
-| Cluster not starting | Run `crsctl stat res -t` and check logs in `/u01/app/grid/diag/` |
-| SSH issues | Verify passwordless SSH is configured between nodes |
-| Ansible connection fails | Check SSH connectivity: `vagrant ssh db11g-rac1` |
-
-### Log Locations
-
-| Component | Log Path |
-|-----------|----------|
-| Oracle install | `/u01/app/oraInventory/logs/` |
-| Grid install | `/u01/app/grid/cfgtoollogs/` |
-| Ansible | `ansible-playbook` output on host |
-| VM bootstrap | `/var/log/vagrant-scripts.log` |
-
-### Useful Commands Inside VMs
-
-```bash
-# Check cluster status
-crsctl check cluster
-crsctl stat res -t
-
-# Check ASM
-su - grid
-asmcmd lsdg
-asmcmd lsap
-
-# Check listener
-lsnrctl status
-lsnrctl service
-
-# Check database
-sqlplus / as sysdba
-SELECT name, open_mode FROM v$database;
-SELECT inst_id, instance_name, status FROM gv$instance;
-
-# Check ASM disks
-ls -l /dev/oracleasm/disks/
-```
+Guest log locations: installer `/u01/app/oraInventory/logs/`, GI
+`/u01/app/grid/cfgtoollogs/`, dbca `/u01/app/oracle/cfgtoollogs/dbca/`.
 
 ## Cleanup
 
 ```bash
-# Destroy the cluster
-vagrant destroy -f
-
-# Remove all data (including shared disks)
-vagrant destroy --force
-vboxmanage closemedium disk --delete <shared-disk-uuid>
+vagrant destroy -f                     # VMs; shared VDIs KEPT (deliberate)
+rm -f .vagrant/shared_disks/*.vdi      # only for a true cold start
 ```
 
-## Security Notes
+VDIs survive `destroy` so a rebuild can reuse ASM content. Note that
+`destroy && up` regenerates ssh state → re-run `01` **before** `02` so the
+trust probes find rebuilt keys/known_hosts.
 
-- This is a **testing/lab environment** only
-- No firewall is configured (for ease of setup)
-- Default Oracle passwords are used (change for production!)
-- Shared disks are stored on the host filesystem
+## Security notes
 
-## License
-
-This project is provided as-is for educational and testing purposes.
+Lab only: shared `oracle` passwords everywhere, no firewalld, no TLS. Never
+expose these ports beyond the host.
 
 ## References
-
-- [Oracle Database 11gR2 Installation Guide](https://docs.oracle.com/cd/E11882_01/install.112/e47689/toc.htm)
-- [Oracle RAC Documentation](https://docs.oracle.com/cd/E11882_01/rac.112/e41961/toc.htm)
-- [Vagrant Documentation](https://www.vagrantup.com/docs)
-- [Ansible Documentation](https://docs.ansible.com/)
+- Oracle 11.2.0.4 Installation Guide (Linux x86-64), RAC chapter
+- Media pack: patch 13390677 (1of7…7of7) — see `staging/` table above
+- ansible-core "Managed Node Requirements" (why 2.16 for EL7 targets)

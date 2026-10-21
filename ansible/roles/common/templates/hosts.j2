@@ -1,22 +1,16 @@
-# Do not remove the following line, or various programs
-# that require network functionality will fail.
-127.0.0.1	localhost.localdomain localhost
-::1		localhost6.localdomain6 localhost6
+# Managed by Ansible (roles/common/templates/hosts.j2)
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
 
-# Public network
+# Public / VIP / interconnect — one block per node.
+# The -vip and -priv aliases are what CVU and root.sh resolve when
+# configuring CRS resources; keep all three forms on every node.
 {% for host in groups['rac'] %}
-{{ hostvars[host]['ansible_default_ipv4']['address'] | default(hostvars[host]['public_ip']) }}	{{ host }}
+{{ hostvars[host].public_ip }}    {{ host }} {{ hostvars[host].short_name }}
+{{ hostvars[host].vip }}          {{ hostvars[host].short_name }}-vip.{{ domain_name }} {{ hostvars[host].short_name }}-vip
+{{ hostvars[host].private_ip }}   {{ hostvars[host].short_name }}-priv.{{ domain_name }} {{ hostvars[host].short_name }}-priv
 {% endfor %}
 
-# Private network (cluster interconnect)
-{% for host in groups['rac'] %}
-{{ hostvars[host]['ansible_default_ipv4']['address'] | default(hostvars[host]['private_ip']) }}	{{ host }}-priv
-{% endfor %}
-
-# Virtual IPs
-{% for host in groups['rac'] %}
-{{ hostvars[host]['ansible_default_ipv4']['address'] | default(hostvars[host]['vip']) }}	{{ host }}-vip
-{% endfor %}
-
-# SCAN IP
-{{ hostvars[groups['rac'][0]]['ansible_default_ipv4']['address'] | default(hostvars[groups['rac'][0]]['scan_ip']) }}	{{ scan_name }}
+# Single SCAN name (dnsmasq serves this; the installer's own resolution
+# prefers DNS, so keep the hosts entry as the fallback — do not remove).
+{{ scan_ip }}    {{ scan_name }}.{{ domain_name }} {{ scan_name }}

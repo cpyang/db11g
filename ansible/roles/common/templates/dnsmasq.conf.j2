@@ -1,0 +1,12 @@
+# Managed by Ansible — dnsmasq serves the cluster zone from /etc/hosts.
+# 11.2.0.4 grid install wants the SCAN name resolvable via DNS; keeping
+# dnsmasq answering (plus the hosts-file fallback) is what stops the
+# CVU PRVF DNS/empty-set failure class on an otherwise-DNS-less lab.
+domain={{ domain_name }}
+expand-hosts
+local=/{{ domain_name }}/
+listen-address=127.0.0.1,{{ public_ip }}
+bind-interfaces
+no-resolv
+cache-size=0
+strict-order

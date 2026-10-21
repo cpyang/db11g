@@ -1,0 +1,35 @@
+# ============================================================
+# Role: storage — shared ASM disks (udev symlinks; ASMLIB not used)
+# 11.2.0.4's ASM reads disks through the asm_diskstring; we deliberately
+# avoid oracleasm-support kmods: VBox SAS disks expose no serial, so the
+# size-keyed udev rules here are the same pattern the sibling labs proved.
+# ============================================================
+
+- name: ASM disks must not be claimed by LVM
+  copy:
+    dest: /etc/lvm/lvm.conf.d/99-oracle-asm-filter.conf
+    content: |
+      devices {
+        global_filter = [ "r|sd[b-z]|", "a|sda|", "a|/dev/mapper/.*|" ]
+      }
+    mode: '0644'
+  failed_when: false   # lvm.conf.d may not exist on minimal LVM installs; harmless
+
+- name: Provision shared ASM disks (node1 zeros+partitions, peer just maps)
+  vars:
+    role_flag: "{{ 'node1' if inventory_hostname == groups['rac'][0] else 'node2' }}"
+  script:
+    cmd: "/bin/bash {{ role_path }}/../../scripts/asm_setup.sh {{ role_flag }}"
+  register: asm_out
+  failed_when: asm_out.rc != 0
+
+- name: Show ASM mapping
+  debug:
+    msg: "{{ asm_out.stdout_lines }}"
+
+- name: Verify ASM symlinks exist
+  stat:
+    path: "/dev/oracleasm/disks/{{ item }}"
+  loop: [CRS, DATA, FRA]
+  register: asm_stat
+  failed_when: not asm_stat.stat.exists
