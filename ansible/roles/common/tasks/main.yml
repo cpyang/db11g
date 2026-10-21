@@ -267,7 +267,7 @@
     - name: Collect host keys for every cluster name/IP (this node's view)
       shell: >-
         set -o pipefail;
-        for h in {{ domain_name }} {{ groups['rac'] | map('regex_replace', '\\.' ~ domain_name ~ '$', '') | join(' ') }} {{ short_name }}
+        for h in {{ domain_name }} {{ groups['rac'] | map('regex_replace', '\.' ~ domain_name ~ '$', '') | join(' ') }} {{ short_name }}
         {% for n in groups['rac'] %}
         {{ hostvars[n].public_ip }} {{ hostvars[n].private_ip }} {{ hostvars[n].vip }}
         {% endfor %}
