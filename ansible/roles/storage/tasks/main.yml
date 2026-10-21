@@ -24,6 +24,8 @@
     # (died on libtinfo.so.6, rc 127; di 2026-10-21). Path first, arg after;
     # the script's own #!/bin/bash shebang runs it.
     cmd: "{{ role_path }}/../../scripts/asm_setup.sh {{ role_flag }}"
+  environment:
+    ASM_FORCE: "{{ '1' if asm_force | default(false) | bool else '0' }}"
   register: asm_out
   failed_when: asm_out.rc != 0
 

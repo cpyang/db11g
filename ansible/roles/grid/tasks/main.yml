@@ -101,34 +101,38 @@
   when: grid_phase == 'software'
 
 # ------------------------------------------------------------------ root.sh
-# EL7 + 11.2.0.4 classic: root.sh registers ohasd in /etc/inittab, which
-# systemd NEVER executes — ohasd doesn't start, root.sh waits ~30 min and
-# dies "Failed to start the Clusterware" (hit on rac1 2026-10-21 12:48Z,
-# after OLR init had already succeeded). Give ohasd a real unit first;
-# re-running root.sh then finds HAS online and proceeds.
-- name: ohasd systemd unit (EL7 inittab workaround)
+# EL7 + 11.2.0.4 classic (hit live on di 2026-10-21 twice): root.sh formats
+# OCR, registers ohasd in /etc/inittab — which systemd NEVER executes —
+# then WAITS ~30 min and dies "Failed to start the Clusterware".
+# Pre-starting ohasd is also wrong: root.sh's own 'ohasd reboot' spawn then
+# fights the pre-started instance (double ohasd.bin = corrupt HAS state).
+# Correct dance: run root.sh ASYNC, wait until it has formatted OCR/OLR and
+# entered its wait loop, then start the stack PROPERLY (crsctl start crs)
+# over the cleaned processes — root.sh's wait sees a live stack and
+# completes. The systemd unit exists ONLY for post-reboot survival
+# (installed+enabled, never started by this play).
+- name: ohasd boot unit (install + enable only — never start here)
   copy:
     dest: /etc/systemd/system/ohasd.service
     mode: '0644'
     content: |
       [Unit]
-      Description=Oracle High Availability Services (ohasd) - EL7 init workaround
+      Description=Oracle HA stack boot bring-up (EL7 inittab workaround)
       After=syslog.target network.target
       [Service]
       Type=oneshot
       RemainAfterExit=yes
-      ExecStart={{ grid_home }}/bin/ohasd start
-      ExecStop={{ grid_home }}/bin/ohasd stop
+      ExecStart={{ grid_home }}/bin/crsctl start crs
+      # NO ExecStop — 'systemctl stop' must never tear the stack mid-phase
       [Install]
       WantedBy=multi-user.target
   when: grid_phase == 'root'
 
-- name: Start ohasd before root.sh
+- name: Enable boot unit (no state change on the running system)
   systemd:
     name: ohasd
     daemon_reload: true
     enabled: true
-    state: started
   when: grid_phase == 'root'
 
 - name: Check whether CRS is already up on this node
@@ -138,19 +142,55 @@
   changed_when: false
   when: grid_phase == 'root'
 
-- name: Run /u01/app/11.2.0/grid/root.sh (as root — do this node1 FIRST)
+- name: Launch root.sh (async — interleaved stack start below)
   command: "{{ grid_home }}/root.sh"
-  register: gi_rootsh
-  failed_when: gi_rootsh.rc != 0
-  timeout: 3600
-  changed_when: true
+  async: 7200
+  poll: 0
+  register: rootsh_async
   when:
     - grid_phase == 'root'
     - crs_up.rc != 0
 
-- name: Show root.sh tail
+- name: Wait for root.sh to reach its start-wait stage (OCR/OLR written)
+  shell: test -f /etc/oracle/ocr.loc || test -f /etc/oracle/olr.loc
+  register: rootsh_progress
+  until: rootsh_progress.rc == 0
+  retries: 180
+  delay: 5
+  changed_when: false
+  when: rootsh_async is not skipped
+
+- name: Start the CRS stack over cleaned processes (unblock root.sh's wait)
+  shell: |-
+    {{ grid_home }}/bin/crsctl stop crs -f >/dev/null 2>&1 || true
+    sleep 5
+    pkill -9 -f 'bin/ohasd.bin' 2>/dev/null || true
+    pkill -9 -f 'bin/crsd.bin'  2>/dev/null || true
+    pkill -9 -f 'bin/ocssd.bin' 2>/dev/null || true
+    sleep 3
+    {{ grid_home }}/bin/crsctl start crs
+  register: stack_start
+  changed_when: true
+  failed_when: false
+  when:
+    - rootsh_async is not skipped
+    - rootsh_progress.rc == 0
+
+- name: Wait for root.sh to complete
+  async_status:
+    jid: "{{ rootsh_async.ansible_job_id }}"
+  register: rootsh_result
+  until: rootsh_result.finished is defined and rootsh_result.finished == 1
+  retries: 240
+  delay: 30
+  failed_when: >-
+    rootsh_result.finished is not defined or rootsh_result.finished != 1
+    or rootsh_result.rc != 0
+  when: rootsh_async is not skipped
+
+- name: Show root.sh result tail
   debug:
-    msg: "{{ (gi_rootsh.stdout_lines | default(['(root.sh skipped — CRS already online on this node)']))[-12:] }}"
+    msg: "{{ (rootsh_result.stdout_lines | default(['(root stage skipped or already online on this node)']))[-12:] }}"
   when: grid_phase == 'root'
 
 # ------------------------------------------------------------------ DGs

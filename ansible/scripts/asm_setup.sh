@@ -54,18 +54,15 @@ if [ "$(printf '%s\n' "${DEV[@]}" | sort -u | wc -l)" != "3" ]; then
 fi
 log "mapping: CRS=${DEV[CRS]} DATA=${DEV[DATA]} FRA=${DEV[FRA]} (role: $NODE_ROLE)"
 
-# ---- node1: zero + partition (once) ----
+# ---- node1: zero + partition (once; ASM_FORCE=1 forces a clean re-do) ----
 if [ "$NODE_ROLE" = "node1" ]; then
   for label in CRS DATA FRA; do
     dev=${DEV[$label]}
-    if lsblk -n -o NAME "$dev" | grep -qE "^$(basename $dev)[0-9]"; then
+    if lsblk -n -o NAME "$dev" | grep -qE "^$(basename $dev)[0-9]" && [ "${ASM_FORCE:-0}" != "1" ]; then
       log "$dev already partitioned — skipping zero/partition"
       continue
     fi
-    if $SUDO blkid "$dev" 2>/dev/null | grep -qiE 'oracleasm|Oracle ASMLIB'; then
-      log "$dev carries an old ASMLIB header — wiping for partitioned mode"
-    fi
-    log "zeroing signatures + GPT partition (whole disk) on $dev"
+    log "zeroing signatures + GPT partition (whole disk) on $dev${ASM_FORCE:+ (forced)}"
     $SUDO wipefs -a "$dev" >/dev/null 2>&1 || true
     printf 'g\nn\n\n\n\n\nw\n' | $SUDO fdisk "$dev" >/dev/null 2>&1
     sleep 2
