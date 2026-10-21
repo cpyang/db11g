@@ -101,6 +101,36 @@
   when: grid_phase == 'software'
 
 # ------------------------------------------------------------------ root.sh
+# EL7 + 11.2.0.4 classic: root.sh registers ohasd in /etc/inittab, which
+# systemd NEVER executes — ohasd doesn't start, root.sh waits ~30 min and
+# dies "Failed to start the Clusterware" (hit on rac1 2026-10-21 12:48Z,
+# after OLR init had already succeeded). Give ohasd a real unit first;
+# re-running root.sh then finds HAS online and proceeds.
+- name: ohasd systemd unit (EL7 inittab workaround)
+  copy:
+    dest: /etc/systemd/system/ohasd.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Oracle High Availability Services (ohasd) - EL7 init workaround
+      After=syslog.target network.target
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart={{ grid_home }}/bin/ohasd start
+      ExecStop={{ grid_home }}/bin/ohasd stop
+      [Install]
+      WantedBy=multi-user.target
+  when: grid_phase == 'root'
+
+- name: Start ohasd before root.sh
+  systemd:
+    name: ohasd
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: grid_phase == 'root'
+
 - name: Check whether CRS is already up on this node
   command: "{{ grid_home }}/bin/crsctl check crs"
   register: crs_up
