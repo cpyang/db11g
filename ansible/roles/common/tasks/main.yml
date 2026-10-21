@@ -163,7 +163,8 @@
     - { path: "{{ oracle_base }}", owner: oracle, mode: '0775' }
     - { path: /u01/app/grid, owner: grid, mode: '0775' }
     - { path: /u01/app/11.2.0, owner: grid, mode: '0775' }
-    - { path: /u01/staging, mode: '0755' }        # mountpoint (vboxsf, ro)
+    # /u01/staging is NOT managed here: it is the vboxsf mountpoint Vagrant
+    # creates at boot — any setattr (chown/chmod) on it fails (ro mount).
     - { path: /u01/media, owner: grid, mode: '0775' }
     - { path: /u01/tmp, mode: '1777' }             # installer scratch off /tmp
   loop_control:
