@@ -23,10 +23,12 @@ SUDO=""
 NODE_ROLE=${1:?usage: asm_setup.sh node1|node2}
 
 # label:desired_full_disk_sectors — MUST match Vagrantfile SHARED_DISKS
+# (values = GB*2^30/512, computed + verified 2026-10-21; literals because a
+# mis-typed $(( )) silently became a subshell here and died on first boot)
 declare -A WANT=(
-  [CRS]=$(   (12 * 1024 * 1024 * 1024 / 512) )
-  [DATA]=$(  (20 * 1024 * 1024 * 1024 / 512) )
-  [FRA]=$(   (10 * 1024 * 1024 * 1024 / 512) )
+  [CRS]=25165824     # 12 GB
+  [DATA]=41943040    # 20 GB
+  [FRA]=20971520     # 10 GB
 )
 
 log() { echo "[asm_setup] $*"; }
