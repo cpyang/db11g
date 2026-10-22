@@ -238,14 +238,14 @@
         sleep 10
         {{ grid_home }}/bin/crsctl check crs 2>/dev/null | grep -q 4537 && break
       done
-      sudo -u oracle {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version" && echo OCR_IPC_CYCLED
-      test $? -eq 0
+      sudo -u oracle {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version" && echo OCR_IPC_CYCLED || exit 1
     fi
   register: ocr_ipc
   changed_when: "'CYCLED' in ocr_ipc.stdout"
   retries: 3
   delay: 20
   until: ocr_ipc.rc == 0
+  failed_when: ocr_ipc.rc != 0
   when: grid_phase == 'root'
 
 - name: Show root.sh result tail
