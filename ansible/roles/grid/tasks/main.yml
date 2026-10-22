@@ -223,6 +223,31 @@
     - rootsh_first is not skipped
     - rootsh_first.rc != 0
 
+- name: OCR-IPC sanity (oracle-visible); cycle CRS if crsd wedged
+  # A crsd left in bootstrap mode by interrupted passes serves crsctl
+  # checks but not oracle-user OCR IPC -> later runInstaller reports
+  # INS-35354 on a healthy cluster (di 2026-10-22 20:08 postmortem).
+  shell: |-
+    if sudo -u oracle {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version"; then
+      echo OCR_IPC_OK
+    else
+      {{ grid_home }}/bin/crsctl stop crs -f >/dev/null 2>&1 || true
+      sleep 10
+      {{ grid_home }}/bin/crsctl start crs
+      for i in $(seq 1 30); do
+        sleep 10
+        {{ grid_home }}/bin/crsctl check crs 2>/dev/null | grep -q 4537 && break
+      done
+      sudo -u oracle {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version" && echo OCR_IPC_CYCLED
+      test $? -eq 0
+    fi
+  register: ocr_ipc
+  changed_when: "'CYCLED' in ocr_ipc.stdout"
+  retries: 3
+  delay: 20
+  until: ocr_ipc.rc == 0
+  when: grid_phase == 'root'
+
 - name: Show root.sh result tail
   debug:
     msg: "{{ (rootsh_second.stdout_lines | default(rootsh_first.stdout_lines | default(['(root stage skipped or already online on this node)']))) | default([]) }}"
