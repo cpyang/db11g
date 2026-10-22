@@ -256,7 +256,7 @@
   when:
     - grid_phase == 'dgs'
     - inventory_hostname == groups['rac'][0]
-    - res_table.stdout is not search('ora\\.data\\.dg')
+    - res_table.stdout is not search('(?i)ora\\.data\\.dg')
 
 - name: Create FRA disk group
   command: >-
@@ -272,7 +272,7 @@
   when:
     - grid_phase == 'dgs'
     - inventory_hostname == groups['rac'][0]
-    - res_table.stdout is not search('ora\\.fra\\.dg')
+    - res_table.stdout is not search('(?i)ora\\.fra\\.dg')
 
 - name: Final cluster verification
   shell: >-
