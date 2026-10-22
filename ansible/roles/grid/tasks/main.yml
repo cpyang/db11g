@@ -139,7 +139,11 @@
   when: grid_phase == 'root'
 
 - name: Check whether CRS is already up on this node
-  command: "{{ grid_home }}/bin/crsctl check crs"
+  # DECEPTIVE: 'crsctl check crs' can exit rc 0 while printing 'PRCO-2:
+  # Unable to communicate with the clusterware' on a dead stack (di
+  # 2026-10-22 17:31 — both nodes skipped root.sh with the cluster down).
+  # Never trust rc here; the stdout search is the guard.
+  command: "timeout 30 {{ grid_home }}/bin/crsctl check crs"
   register: crs_up
   failed_when: false
   changed_when: false
@@ -158,7 +162,7 @@
   changed_when: true
   when:
     - grid_phase == 'root'
-    - crs_up.rc != 0
+    - crs_up.rc != 0 or 'CRS-4537' not in crs_up.stdout
 
 - name: Verify first-pass failure is only the EL7 ohasd gap
   shell: |-
