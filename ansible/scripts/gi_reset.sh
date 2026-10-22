@@ -36,3 +36,7 @@ $SUDO rm -rf /u01/app/oracle/cfgtoollogs
 
 echo "RESET_DONE $(hostname)"
 $SUDO ls -la /u01/app/ 2>/dev/null | head -8
+
+echo "NOTE: disk HEADERS are not wiped here - the next build must run"
+echo "      playbook 02 with -e asm_force=true (stack DOWN only!), else the"
+echo "      GI installer aborts with INS-30516 on the stale +CRS dg."
