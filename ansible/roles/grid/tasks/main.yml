@@ -123,7 +123,7 @@
       Type=oneshot
       RemainAfterExit=yes
       KillMode=none
-      ExecStart=/bin/sh -c 'af=/etc/oracle/scls_scr/$(hostname | cut -d. -f1)/root/ohasdrun; echo restart > $af; setsid /etc/rc.d/init.d/init.ohasd run >>/var/log/init.ohasd.supervisor 2>&1 &'
+      ExecStart=/bin/sh -c 'af=/etc/oracle/scls_scr/$(hostname | cut -d. -f1)/root/ohasdrun; echo restart > $af; setsid /bin/sh -c "echo \$\$ > /var/run/init.ohasd.supervisor.pid; exec /etc/rc.d/init.d/init.ohasd run" >>/var/log/init.ohasd.supervisor 2>&1 &'
       # Supervisor-loop form (see Start-HAS task for the pipe-pairing
       # postmortem). KillMode=none so systemd never reaps the detached
       # loop + daemon children (di 18:24).
@@ -184,8 +184,16 @@
   shell: |-
     {{ grid_home }}/bin/crsctl stop has -f >/dev/null 2>&1 || true
     sleep 5
-    pkill -9 -f 'bin/ohasd.bin' 2>/dev/null || true
-    pkill -f 'init.ohasd run' 2>/dev/null || true
+    # Cleanup split by what pkill -x CAN see: ELF daemons (ohasd.bin,
+    # crsd.bin, ocssd.bin — real comms) by name; the supervisor loop is a
+    # bash COMM (init.ohasd is a script) so it goes by its pidfile.
+    # pkill -f (ANY form) is forbidden here: this script's text lives in
+    # the task shell's AND its ssh-ancestor cmdlines (rc -9, 18:13:40).
+    if [ -f /var/run/init.ohasd.supervisor.pid ]; then
+      kill -9 "$(cat /var/run/init.ohasd.supervisor.pid)" 2>/dev/null || true
+      rm -f /var/run/init.ohasd.supervisor.pid
+    fi
+    for n in ohasd.bin crsd.bin ocssd.bin; do pkill -9 -x $n 2>/dev/null || true; done
     # ohasd.bin parks in a nanosleep loop until its init.ohasd supervisor
     # pipe partner exists (di 18:31: ohasd.bin alive, socket bound, check
     # has = CRS-4639 forever). The restart branch in the SysV loop is the
@@ -195,7 +203,7 @@
     # autorun state to restart first, then run the loop detached.
     af=/etc/oracle/scls_scr/$(hostname | cut -d. -f1 | tr 'A-Z' 'a-z')/root/ohasdrun
     echo restart > $af
-    setsid /bin/sh -c "/etc/rc.d/init.d/init.ohasd run >>/var/log/init.ohasd.supervisor 2>&1" &
+    setsid /bin/sh -c 'echo $$ > /var/run/init.ohasd.supervisor.pid; exec /etc/rc.d/init.d/init.ohasd run' >>/var/log/init.ohasd.supervisor 2>&1 &
     for i in $(seq 1 48); do
       sleep 5
       {{ grid_home }}/bin/crsctl check has 2>/dev/null && exit 0
