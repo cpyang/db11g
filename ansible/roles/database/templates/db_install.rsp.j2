@@ -21,7 +21,11 @@ oracle.install.db.DBA_GROUP={{ oracle_db_group }}
 oracle.install.db.OPER_GROUP={{ oracle_oper_group | default('oper') }}
 
 # (Plain list expression — see grid.rsp.j2 note about inline block tags.)
-oracle.install.db.CLUSTER_NODES={{ groups['rac'] | join(',') }}
+# MUST be the cluster's registered node names (bare hostnames, per
+# 'olsnodes -n') — FQDNs here make the installer report INS-35354
+# 'system is not part of a valid cluster' on a perfectly healthy GI (di
+# 2026-10-22 19:51).
+oracle.install.db.CLUSTER_NODES={{ groups['rac'] | map('extract', hostvars) | map(attribute='short_name') | join(',') }}
 oracle.install.db.isRACOneInstall=false
 oracle.install.db.racOneServiceName=
 
