@@ -149,23 +149,6 @@
   changed_when: false
   when: grid_phase == 'root'
 
-- name: Start HAS on join nodes before root.sh (gpnp/mdns must answer discovery)
-  # Chicken-and-egg on node2: root.sh fresh-detects (and then fails) unless
-  # a LIVE gpnpd can show it the existing cluster — but gpnpd belongs to
-  # HAS, which on a join node only ever gets a valid OLR VIA root.sh.
-  # crsctl start has boots a config-less HAS whose gpnpd+mdns answer
-  # discovery, letting the very first root.sh take the true addnode branch
-  # (di 2026-10-23 10:43: CRS-4046 through all of pass1/pass2 without it).
-  # NEVER on the first node — that poisons fresh config (yesterday's rac1).
-  command: "{{ grid_home }}/bin/crsctl start has"
-  register: has_pre
-  failed_when: false
-  changed_when: false
-  when:
-    - grid_phase == 'root'
-    - inventory_hostname != groups['rac'][0]
-    - crs_up.rc != 0 or 'CRS-4537' not in crs_up.stdout
-
 - name: Run root.sh (first pass, dies at the EL7 ohasd respawn gap)
   # No interleave, no async. root.sh's own ~30-min wait happens BEFORE it
   # logs 'ohasd failed to start' (di 2026-10-21 16:16->16:52 timeline), so
@@ -182,11 +165,11 @@
     - crs_up.rc != 0 or 'CRS-4537' not in crs_up.stdout
 
 - name: Classify first-pass failure (informational)
-  # node2's first pass can legitimately die rc25 in fresh-detect mode
-  # (ASM create attempt) BEFORE any HAS exists to consult the OCR with —
-  # the pass-2 run is what joins via the live stack. Halting here was
-  # self-defeating (di 2026-10-23 10:29). Warn only; pass 2's outcome is
-  # the real verdict.
+  # node2's fresh-detect rc25 vs join-OLR rc1 both proceed to the two-pass
+  # dance; profile currency decides which branch root.sh takes (run C 10:50
+  # proved a PRE-STARTED config-less HAS must NOT exist, else scls init
+  # hits CRS-4046). Join detection comes from the LIVE gpnp profile on disk
+  # (SPFile tag), which any earlier gpnpd run has already fetched.
   shell: |-
     if [ {{ rootsh_first.rc | default(0) }} -eq 0 ]; then echo CLEAN_PASS; exit 0; fi
     log=$(ls -t {{ grid_home }}/install/root_*.log 2>/dev/null | head -1)
@@ -225,6 +208,7 @@
     # start has inside that loop waits on this same pipe). So: set the
     # autorun state to restart first, then run the loop detached.
     af=/etc/oracle/scls_scr/$(hostname | cut -d. -f1 | tr 'A-Z' 'a-z')/root/ohasdrun
+    mkdir -p $(dirname $af)
     echo restart > $af
     setsid /bin/sh -c 'echo $$ > /var/run/init.ohasd.supervisor.pid; exec /etc/rc.d/init.d/init.ohasd run' >>/var/log/init.ohasd.supervisor 2>&1 &
     for i in $(seq 1 48); do
