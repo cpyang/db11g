@@ -67,6 +67,12 @@ if [ "$NODE_ROLE" = "node1" ]; then
     printf 'g\nn\n\n\n\n\nw\n' | $SUDO fdisk "$dev" >/dev/null 2>&1
     sleep 2
     udevadm settle 2>/dev/null || true
+    # wipefs+GPT do NOT clear the partition's DATA AREA: an old ASM header
+    # at the (same-sector-aligned) partition start survives a forced rebuild
+    # verbatim and the GI installer then aborts INS-30516 'disk group already
+    # exists' on wiped disks (di 2026-10-22 22:19 — two forced re-runs fooled
+    # this way). Zero 10 MB past every header location.
+    $SUDO dd if=/dev/zero of=${dev}1 bs=1M count=10 conv=notrunc status=none
   done
 fi
 
