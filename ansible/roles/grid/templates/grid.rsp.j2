@@ -30,7 +30,14 @@ oracle.install.crs.config.gpnp.gnsVIPAddress=
 # Explicit VIPs — autoConfigure=true against host-only NICs is the
 # PRKC-1168 "AUTO address invalid" failure class in labs.
 oracle.install.crs.config.autoConfigureClusterNodeVIP=false
-oracle.install.crs.config.clusterNodes={{ groups['rac'] | zip(groups['rac'] | map('extract', hostvars, 'short_name') | map('regex_replace', '$', '-vip.' ~ domain_name)) | map('join', ':') | join(',') }}
+# Install-phase cluster membership = FIRST NODE ONLY. Listing rac2 here
+# makes runInstaller AttachHome + stamp SYSTEM.version.hostnames.<n2> in
+# the OCR without any node registration — that orphan key then makes
+# addNode refuse ('already part of the cluster') and root.sh's create scr
+# 4046 forever (di 2026-10-23 phantom postmortem). node2's genuine
+# registration is addNode.sh's job, run by the root phase before its
+# root.sh (see roles/grid 'Register join node' task).
+oracle.install.crs.config.clusterNodes={{ hostvars[groups['rac'][0]].short_name }}:{{ hostvars[groups['rac'][0]].short_name }}-vip.{{ domain_name }}
 
 # Interfaces resolved BY ADDRESS at runtime (format iface:subnet:usage,
 # 1=public 2=private 3=unused — the NAT NIC must be listed :3 or CVU probes it).
