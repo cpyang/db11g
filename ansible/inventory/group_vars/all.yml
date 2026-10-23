@@ -132,7 +132,8 @@ asm_disks:
   - { label: FRA,  size_gb: 10 }
 
 # --- NTP ---
+# Same EXPLICIT server on both nodes: CVU's PRVF-5408 'common NTP server'
+# check fails when pool.* randomizes each node onto different upstreams
+# (di 2026-10-23 addNode postmortem).
 ntp_servers:
-  - 0.pool.ntp.org
-  - 1.pool.ntp.org
-  - 2.pool.ntp.org
+  - time.google.com
