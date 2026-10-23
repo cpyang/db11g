@@ -149,6 +149,23 @@
   changed_when: false
   when: grid_phase == 'root'
 
+- name: Start HAS on join nodes before root.sh (gpnp/mdns must answer discovery)
+  # Chicken-and-egg on node2: root.sh fresh-detects (and then fails) unless
+  # a LIVE gpnpd can show it the existing cluster — but gpnpd belongs to
+  # HAS, which on a join node only ever gets a valid OLR VIA root.sh.
+  # crsctl start has boots a config-less HAS whose gpnpd+mdns answer
+  # discovery, letting the very first root.sh take the true addnode branch
+  # (di 2026-10-23 10:43: CRS-4046 through all of pass1/pass2 without it).
+  # NEVER on the first node — that poisons fresh config (yesterday's rac1).
+  command: "{{ grid_home }}/bin/crsctl start has"
+  register: has_pre
+  failed_when: false
+  changed_when: false
+  when:
+    - grid_phase == 'root'
+    - inventory_hostname != groups['rac'][0]
+    - crs_up.rc != 0 or 'CRS-4537' not in crs_up.stdout
+
 - name: Run root.sh (first pass, dies at the EL7 ohasd respawn gap)
   # No interleave, no async. root.sh's own ~30-min wait happens BEFORE it
   # logs 'ohasd failed to start' (di 2026-10-21 16:16->16:52 timeline), so
