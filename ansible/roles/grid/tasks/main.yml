@@ -149,6 +149,31 @@
   changed_when: false
   when: grid_phase == 'root'
 
+- name: Ensure HAS DOWN at first-pass start (join-mode guard)
+  # A LIVE ohasd makes rootcrs abort at scls init with CRS-4046 — it wants
+  # to spawn/own the daemon itself (run C/D, di 10:50 & 11:05: pre-started
+  # config-less daemon = instant 4046; leftovers from the previous failed
+  # pass = the same). This is why chain2's first ever node1 pass worked:
+  # nothing was running. Join mode needs no daemon: rootcrs reaches OCR
+  # through gipc + on-disk profile.
+  shell: |-
+    {{ grid_home }}/bin/crsctl stop has -f >/dev/null 2>&1 || true
+    sleep 5
+    for n in ohasd.bin crsd.bin ocssd.bin gpnpd.bin mdnsd.bin oraroot.bin; do pkill -9 -x $n 2>/dev/null || true; done
+    # Supervisor loop kill via /proc cmdline scan — immune to the pkill -f
+    # self-match (this script text never appears in any /proc/*/cmdline
+    # being read) and to a MISSING pidfile (run C died before writing it,
+    # and its orphan loop respawned the daemon during run D = 4046 again).
+    for p in $(grep -l "init[.]ohasd" /proc/*/cmdline 2>/dev/null | cut -d/ -f3); do
+      [ "$p" != "$$" ] && kill -9 "$p" 2>/dev/null || true
+    done
+    if [ -f /var/run/init.ohasd.supervisor.pid ]; then kill -9 "$(cat /var/run/init.ohasd.supervisor.pid)" 2>/dev/null || true; rm -f /var/run/init.ohasd.supervisor.pid; fi
+    true
+  changed_when: false
+  when:
+    - grid_phase == 'root'
+    - crs_up.rc != 0 or 'CRS-4537' not in crs_up.stdout
+
 - name: Run root.sh (first pass, dies at the EL7 ohasd respawn gap)
   # No interleave, no async. root.sh's own ~30-min wait happens BEFORE it
   # logs 'ohasd failed to start' (di 2026-10-21 16:16->16:52 timeline), so

@@ -7,6 +7,9 @@ expand-hosts
 local=/{{ domain_name }}/
 listen-address=127.0.0.1,{{ public_ip }}
 bind-interfaces
-no-resolv
 cache-size=0
 strict-order
+# Upstream = the VirtualBox NAT resolver (eth0). 'no-resolv' here starved
+# dnsmasq of any forwarder and ntpd/ yum could not resolve anything
+# (di 2026-10-23 addNode PRVF-5410 postmortem). Override with -e dns_upstream=...
+server={{ dns_upstream | default('10.0.2.3') }}
