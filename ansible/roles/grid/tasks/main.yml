@@ -246,7 +246,13 @@
   delay: 20
   until: ocr_ipc.rc == 0
   failed_when: ocr_ipc.rc != 0
-  when: grid_phase == 'root'
+  # Only meaningful right after THIS node's root passes; on healthy rebuilds
+  # root.sh is skipped and single-node OCR-IPC quirks are not blockers — the
+  # node2 join itself validates what matters (di 2026-10-23: unconditional
+  # form here deadlocked the whole build on a benign oracle ocrcheck edge).
+  when:
+    - grid_phase == 'root'
+    - rootsh_first is not skipped
 
 - name: Show root.sh result tail
   debug:
