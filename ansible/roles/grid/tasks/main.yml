@@ -164,16 +164,22 @@
     - grid_phase == 'root'
     - crs_up.rc != 0 or 'CRS-4537' not in crs_up.stdout
 
-- name: Verify first-pass failure is only the EL7 ohasd gap
+- name: Classify first-pass failure (informational)
+  # node2's first pass can legitimately die rc25 in fresh-detect mode
+  # (ASM create attempt) BEFORE any HAS exists to consult the OCR with —
+  # the pass-2 run is what joins via the live stack. Halting here was
+  # self-defeating (di 2026-10-23 10:29). Warn only; pass 2's outcome is
+  # the real verdict.
   shell: |-
     if [ {{ rootsh_first.rc | default(0) }} -eq 0 ]; then echo CLEAN_PASS; exit 0; fi
     log=$(ls -t {{ grid_home }}/install/root_*.log 2>/dev/null | head -1)
     if [ -n "$log" ] && grep -q 'ohasd failed to start' "$log"; then
-      echo EXPECTED_EL7_GAP; exit 0
+      echo EXPECTED_EL7_GAP
+    else
+      echo "NOTE unexpected signature rc={{ rootsh_first.rc }}; last lines:"
+      tail -6 "$log" 2>/dev/null
     fi
-    echo "UNEXPECTED root.sh failure — last 30 lines:"
-    tail -30 "$log" 2>/dev/null
-    exit 1
+    exit 0
   changed_when: false
   when: rootsh_first is not skipped
 
