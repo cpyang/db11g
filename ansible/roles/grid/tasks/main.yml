@@ -174,6 +174,28 @@
     - grid_phase == 'root'
     - crs_up.rc != 0 or 'CRS-4537' not in crs_up.stdout
 
+- name: Register join node via addNode.sh (executed on the first node)
+  # root.sh on a join node CANNOT self-register: 'crsctl create scr' aborts
+  # CRS-4046 until addNode.sh has registered the node (di 2026-10-23; the
+  # EL7 precheck gauntlet addNode itself demands is catalogued in skill ref
+  # el7-ohasd-startup.md — oraInst.loc, ntp -x/pidfile/common-server,
+  # domain-XOR-search resolv, pdksh RPM, CVU sysctls). Re-running after a
+  # completed join fails harmlessly ('already part of the cluster') and is
+  # skipped entirely when this node's root.sh is already online.
+  command: >-
+    {{ grid_home }}/oui/bin/addNode.sh -silent -noconfig
+    CLUSTER_NEW_NODES={{ '{' }}{{ inventory_hostname_short }}{{ '}' }}
+    CLUSTER_NEW_VIRTUAL_HOSTNAMES={{ '{' }}{{ inventory_hostname_short }}-vip{{ '}' }}
+  become_user: grid
+  delegate_to: "{{ groups['rac'][0] }}"
+  register: addnode_run
+  failed_when: false
+  changed_when: addnode_run.rc == 0
+  when:
+    - grid_phase == 'root'
+    - inventory_hostname != groups['rac'][0]
+    - crs_up.rc != 0 or 'CRS-4537' not in crs_up.stdout
+
 - name: Run root.sh (first pass, dies at the EL7 ohasd respawn gap)
   # No interleave, no async. root.sh's own ~30-min wait happens BEFORE it
   # logs 'ohasd failed to start' (di 2026-10-21 16:16->16:52 timeline), so
