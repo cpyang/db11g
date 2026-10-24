@@ -207,7 +207,7 @@
     P={{ grid_home }}/crs/install/crsconfig_params
     grep -q CRS_DHCP_ENABLED $P || printf 'CRS_DHCP_ENABLED=false\n' >> $P
     grep -q CLUSTER_NEW_HOST_NAMES $P || printf 'CLUSTER_NEW_HOST_NAMES={{ "{" }}%s-vip.{{ domain_name }}{{ "}" }}\n' "$(hostname -s)" >> $P
-    grep -q CLUSTER_NEW_VIPS $P || printf 'CLUSTER_NEW_VIPS={{ "{" }}%s-vip.{{ domain_name }}{{ "}" }}\n' "$(hostname -s)" >> $P
+    grep -q CLUSTER_NEW_VIPS $P || printf 'CLUSTER_NEW_VIPS={{ "{" }}255.255.255.0|%s-vip.{{ domain_name }}{{ "}" }}\n' "$(hostname -s)" >> $P
   when:
     - grid_phase == 'root'
     - inventory_hostname != groups['rac'][0]
