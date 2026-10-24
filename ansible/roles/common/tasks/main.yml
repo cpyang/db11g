@@ -180,6 +180,19 @@
     mode: '0644'
   notify: apply sysctl
 
+- name: Mirror sysctl settings into /etc/sysctl.conf (CVU reads ONLY this file)
+  # 11.2 CVU exectask greps /etc/sysctl.conf for 'Configured value';
+  # conf.d-only installs fail 'nodeadd'-style prechecks with
+  # 'failed (ignorable) Configured value unknown' — and runInstaller's
+  # internal nodeadd gate turns that into the misleading INS-35354
+  # 'not part of a valid cluster' (di 2026-10-24, end of the trail).
+  template:
+    src: sysctl.j2
+    dest: /etc/sysctl.conf
+    owner: root
+    group: root
+    mode: '0644'
+
 - name: Resource limits (drop-in, do NOT overwrite the managed limits.conf)
   template:
     src: limits.conf.j2
