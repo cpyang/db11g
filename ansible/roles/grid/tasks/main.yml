@@ -277,26 +277,36 @@
     - rootsh_first is not skipped
     - rootsh_first.rc != 0
 
-- name: OCR-IPC sanity (oracle-visible); cycle CRS if crsd wedged
+- name: OCR-IPC sanity (grid-visible); supervisor-cycle if crsd wedged
   # A crsd left in bootstrap mode by interrupted passes serves crsctl
-  # checks but not oracle-user OCR IPC -> later runInstaller reports
-  # INS-35354 on a healthy cluster (di 2026-10-22 20:08 postmortem).
+  # checks but not OCR IPC -> later runInstaller reports INS-35354 on a
+  # healthy cluster (di 2026-10-22 20:08 postmortem). Probe with GRID,
+  # the only OCR-registered user before the DB home's root.sh adds
+  # oracle's privcfg: oracle-user ocrcheck legitimately PROT-602/
+  # ORA-01017s on a fresh single-node cluster (di 2026-10-24 false
+  # alarm, cost a whole build). Never cycle via 'crsctl start crs' on
+  # EL7 — that raises an orphaned ohasd; use the supervisor loop.
   shell: |-
-    if sudo -u oracle {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version"; then
+    if sudo -u grid {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version"; then
       echo OCR_IPC_OK
     else
       {{ grid_home }}/bin/crsctl stop crs -f >/dev/null 2>&1 || true
-      sleep 10
-      {{ grid_home }}/bin/crsctl start crs
+      sleep 5
+      for n in ohasd.bin crsd.bin ocssd.bin; do pkill -x $n 2>/dev/null || true; done
+      if [ -f /var/run/init.ohasd.supervisor.pid ]; then kill "$(cat /var/run/init.ohasd.supervisor.pid)" 2>/dev/null || true; fi
+      mkdir -p /etc/oracle/scls_scr/{{ ansible_hostname }}/root
+      echo restart > /etc/oracle/scls_scr/{{ ansible_hostname }}/root/ohasdrun
+      sleep 1
+      setsid /bin/sh -c 'echo $$ > /var/run/init.ohasd.supervisor.pid; exec /etc/rc.d/init.d/init.ohasd run' >> /var/log/init.ohasd.supervisor 2>&1 &
       for i in $(seq 1 30); do
         sleep 10
         {{ grid_home }}/bin/crsctl check crs 2>/dev/null | grep -q 4537 && break
       done
-      sudo -u oracle {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version" && echo OCR_IPC_CYCLED || exit 1
+      sudo -u grid {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version" && echo OCR_IPC_CYCLED || exit 1
     fi
   register: ocr_ipc
   changed_when: "'CYCLED' in ocr_ipc.stdout"
-  retries: 3
+  retries: 2
   delay: 20
   until: ocr_ipc.rc == 0
   failed_when: ocr_ipc.rc != 0
