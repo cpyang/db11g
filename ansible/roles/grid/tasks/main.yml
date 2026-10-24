@@ -307,7 +307,8 @@
   # alarm, cost a whole build). Never cycle via 'crsctl start crs' on
   # EL7 — that raises an orphaned ohasd; use the supervisor loop.
   shell: |-
-    if sudo -u grid {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version"; then
+    ocr() { su -s /bin/bash $1 -c "ORACLE_HOME={{ grid_home }} {{ grid_home }}/bin/ocrcheck" 2>&1 | grep -q "Version"; }
+    if ocr grid && ocr oracle; then
       echo OCR_IPC_OK
     else
       {{ grid_home }}/bin/crsctl stop crs -f >/dev/null 2>&1 || true
@@ -322,7 +323,7 @@
         sleep 10
         {{ grid_home }}/bin/crsctl check crs 2>/dev/null | grep -q 4537 && break
       done
-      sudo -u grid {{ grid_home }}/bin/ocrcheck 2>&1 | grep -q "Version" && echo OCR_IPC_CYCLED || exit 1
+      ocr grid && ocr oracle && echo OCR_IPC_CYCLED || exit 1
     fi
   register: ocr_ipc
   changed_when: "'CYCLED' in ocr_ipc.stdout"
