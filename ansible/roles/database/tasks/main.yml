@@ -61,6 +61,25 @@
     - db_phase == 'software'
     - inventory_hostname == groups['rac'][0]
 
+# 11.2.0.4's OIII parser sets the CRS-home flag from the HOME attribute
+# CRS="true" (getValue("CRS")) — GRID="true" is the 12.2+ token and is
+# IGNORED here: without CRS the DB installer takes the vendor-clusterware
+# path, sees 0 nodes and aborts INS-35354 on a healthy GI (di 2026-10-24).
+- name: Ensure GI home carries CRS="true" in the central inventory
+  shell: |-
+    # idempotent attribute guard on the grid HOME line
+    F=/u01/app/oraInventory/ContentsXML/inventory.xml
+    sed -i '/LOC="{{ grid_home }}"/{/CRS=/!s#\(GRID="true"\)#\1 CRS="true"#; /GRID=/!s#\(IDX="[0-9]*"\)#\1 CRS="true"#}' "$F"
+    grep -a '{{ grid_home }}' "$F" | grep -ac 'CRS="true"'
+  args:
+    executable: /bin/bash
+  register: crs_attr
+  changed_when: true
+  failed_when: crs_attr.stdout|int < 1
+  when:
+    - db_phase == 'software'
+    - inventory_hostname == groups['rac'][0]
+
 - name: Install RDBMS software (node1; propagates to CLUSTER_NODES)
   # Single-line shell:11.2 silent install runs foreground to completion.
   # MUST NOT carry -waitforcompletion:
