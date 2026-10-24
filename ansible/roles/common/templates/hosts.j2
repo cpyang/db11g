@@ -6,7 +6,7 @@
 # The -vip and -priv aliases are what CVU and root.sh resolve when
 # configuring CRS resources; keep all three forms on every node.
 {% for host in groups['rac'] %}
-{{ hostvars[host].public_ip }}    {{ host }} {{ hostvars[host].short_name }}
+{{ hostvars[host].public_ip }}    {{ hostvars[host].short_name }} {{ host }}
 {{ hostvars[host].vip }}          {{ hostvars[host].short_name }}-vip.{{ domain_name }} {{ hostvars[host].short_name }}-vip
 {{ hostvars[host].private_ip }}   {{ hostvars[host].short_name }}-priv.{{ domain_name }} {{ hostvars[host].short_name }}-priv
 {% endfor %}
