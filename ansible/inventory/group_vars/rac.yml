@@ -25,4 +25,4 @@ db_sid_prefix: rac            # instances rac1, rac2 (= prefix + node_num)
 db_charset: AL32UTF8
 db_ncharset: AL16UTF16
 db_memory_percentage: 40
-dbca_template: "{{ oracle_home }}/assist/dbca/templates/General_Purpose.dbc"
+dbca_template: "{{ oracle_home }}/assistants/dbca/templates/General_Purpose.dbc"
