@@ -204,8 +204,9 @@
   # joined CSS and written its root OCR keys (di 2026-10-24 pass2
   # rc25). The lab is always static.
   shell: |
-    grep -q CRS_DHCP_ENABLED {{ grid_home }}/crs/install/crsconfig_params \
-      || printf 'CRS_DHCP_ENABLED=false\n' >> {{ grid_home }}/crs/install/crsconfig_params
+    P={{ grid_home }}/crs/install/crsconfig_params
+    grep -q CRS_DHCP_ENABLED $P || printf 'CRS_DHCP_ENABLED=false\n' >> $P
+    grep -q CLUSTER_NEW_HOST_NAMES $P || printf 'CLUSTER_NEW_HOST_NAMES={{ "{" }}%s-vip.{{ domain_name }}{{ "}" }}\n' "$(hostname -s)" >> $P
   when:
     - grid_phase == 'root'
     - inventory_hostname != groups['rac'][0]
