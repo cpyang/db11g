@@ -62,11 +62,14 @@
     - inventory_hostname == groups['rac'][0]
 
 - name: Install RDBMS software (node1; propagates to CLUSTER_NODES)
-  command: >-
-    {{ oracle_media_dir }}/database/runInstaller -silent
-    -responseFile {{ grid_install_tmp }}/db_install.rsp
-    -ignorePrereq
-    -waitforcompletion
+  # Single-line shell:11.2 silent install runs foreground to completion.
+  # MUST NOT carry -waitforcompletion:
+  # its wizard-reinit path blanks the ClusterContext (getCSSConfigType
+  # configType=false in the trace) and runInstaller aborts INS-35354 no
+  # matter how healthy the cluster is (di 2026-10-24 — this flag poisoned
+  # the whole multi-day hunt). Without it, silent install runs to
+  # completion in the foreground.
+  shell: "{{ oracle_media_dir }}/database/runInstaller -silent -responseFile {{ grid_install_tmp }}/db_install.rsp -ignorePrereq"
   become_user: oracle
   environment:
     # OCR registers nodes by BARE name (olsnodes). The DB installer
