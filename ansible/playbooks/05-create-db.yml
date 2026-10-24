@@ -52,6 +52,7 @@
         -memoryPercentage {{ db_memory_percentage }}
         -databaseType OLTP
         -sampleSchema false
+        -nodeList {{ groups['rac'] | map('split', '.') | map('first') | join(',') }}
       become_user: oracle
       environment: "{{ db_home_env }}"
       register: dbca_create
