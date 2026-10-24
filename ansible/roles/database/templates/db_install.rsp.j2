@@ -7,7 +7,7 @@
 # ============================================================
 oracle.install.responseFileVersion=/oracle/install/rspfmt_dbinstall_response_schema_v11_2_0
 oracle.install.option=INSTALL_DB_SWONLY
-ORACLE_HOSTNAME={{ inventory_hostname }}
+ORACLE_HOSTNAME={{ hostvars[inventory_hostname].short_name | default(inventory_hostname) }}
 UNIX_GROUP_NAME={{ oracle_installer_group }}
 INVENTORY_LOCATION={{ ora_inventory }}
 SELECTED_LANGUAGES=en

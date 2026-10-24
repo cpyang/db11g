@@ -69,7 +69,12 @@
     -waitforcompletion
   become_user: oracle
   environment:
-    ORACLE_HOSTNAME: "{{ inventory_hostname }}"
+    # OCR registers nodes by BARE name (olsnodes). The DB installer
+    # validates 'is THIS system a cluster member' by matching
+    # ORACLE_HOSTNAME against that registry — the inventory FQDN makes
+    # a perfectly healthy cluster read as INS-35354 (di 2026-10-24,
+    # fourth independent root cause of the same error string).
+    ORACLE_HOSTNAME: "{{ hostvars[inventory_hostname].short_name | default(inventory_hostname) }}"
     TMPDIR: "{{ grid_install_tmp }}"
     LANG: en_US.UTF-8
   register: db_install
