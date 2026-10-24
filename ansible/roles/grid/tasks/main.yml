@@ -196,6 +196,20 @@
     - inventory_hostname != groups['rac'][0]
     - crs_up.rc != 0 or 'CRS-4537' not in crs_up.stdout
 
+- name: Ensure join node paramfile knows the DHCP mode
+  # Static-IP installs never write CRS_DHCP_ENABLED into
+  # crsconfig_params, and addNode -noconfig doesn't propagate it; the
+  # join node's root.sh then dies in s_getExistingParams with
+  # 'Parameter CRS_DHCP_ENABLED not defined' AFTER it has already
+  # joined CSS and written its root OCR keys (di 2026-10-24 pass2
+  # rc25). The lab is always static.
+  shell: |
+    grep -q CRS_DHCP_ENABLED {{ grid_home }}/crs/install/crsconfig_params \
+      || printf 'CRS_DHCP_ENABLED=false\n' >> {{ grid_home }}/crs/install/crsconfig_params
+  when:
+    - grid_phase == 'root'
+    - inventory_hostname != groups['rac'][0]
+
 - name: Run root.sh (first pass, dies at the EL7 ohasd respawn gap)
   # No interleave, no async. root.sh's own ~30-min wait happens BEFORE it
   # logs 'ohasd failed to start' (di 2026-10-21 16:16->16:52 timeline), so
