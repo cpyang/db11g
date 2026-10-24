@@ -338,3 +338,17 @@
     profile_base: "{{ grid_base }}"
     profile_home: "{{ grid_home }}"
     profile_sid: "+ASM{{ node_num }}"
+
+# ---------------------------------------------------------------- login PATH
+- name: GI bin in the PAM default PATH (/etc/environment)
+  # ssh non-interactive `bash -c` sources NEITHER .bash_profile NOR .bashrc,
+  # yet OUI's OIP layer probes remote nodes with bare `olsnodes` — a missing
+  # PATH entry yields "S_NO_HOST_CLUSTER_INFO" and the fatal INS-35354
+  # "not part of a valid cluster" no matter how healthy the stack is
+  # (di 2026-10-24, the SEVENTH and terminal root cause of that error).
+  lineinfile:
+    path: /etc/environment
+    regexp: "^PATH="
+    line: 'PATH="{{ grid_home }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"'
+    create: yes
+    mode: "0644"
