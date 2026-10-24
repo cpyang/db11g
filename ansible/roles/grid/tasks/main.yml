@@ -206,8 +206,12 @@
   shell: |
     P={{ grid_home }}/crs/install/crsconfig_params
     grep -q CRS_DHCP_ENABLED $P || printf 'CRS_DHCP_ENABLED=false\n' >> $P
-    grep -q CLUSTER_NEW_HOST_NAMES $P || printf 'CLUSTER_NEW_HOST_NAMES={{ "{" }}%s-vip.{{ domain_name }}{{ "}" }}\n' "$(hostname -s)" >> $P
-    grep -q CLUSTER_NEW_VIPS $P || printf 'CLUSTER_NEW_VIPS={{ "{" }}255.255.255.0|%s-vip.{{ domain_name }}{{ "}" }}\n' "$(hostname -s)" >> $P
+    # crsconfig_lib splits these on COMMA — bare values, no braces.
+    # HOST = registered (short) node name; VIPS = the VIP IP. Braces or
+    # names here make the vip lookup fall through and dump 'eth1' into
+    # the netmask slot (PRKC-1024, di 2026-10-24 night postmortem).
+    grep -q '^CLUSTER_NEW_HOST_NAMES=' $P || printf 'CLUSTER_NEW_HOST_NAMES=%s\n' "$(hostname -s)" >> $P
+    grep -q '^CLUSTER_NEW_VIPS=' $P || printf 'CLUSTER_NEW_VIPS={{ hostvars[inventory_hostname].vip }}\n' >> $P
   when:
     - grid_phase == 'root'
     - inventory_hostname != groups['rac'][0]
