@@ -134,6 +134,24 @@ not remove the play ordering.
 Before the **first** real run of 05, sanity-check the dbca flags on the VM:
 `vagrant ssh db11g-rac1 -c "sudo -u oracle /u01/app/oracle/product/11.2.0/dbhome_1/bin/dbca -createDatabase -help"`.
 
+Playbook 05 gotchas (all learned the hard way — see the playbook comments):
+
+- The DB is created as a true 2-node cluster DB in one call
+  (`-nodeList db11g-rac1,db11g-rac2`). With `-nodeList`, `-sid` is a
+  **prefix**: dbca names instances `<sid><node#>`, so pass `-sid rac`
+  (getting `rac1`/`rac2`), never `-sid rac1` (which yields
+  `rac11`/`rac12` — only fixable by drop + recreate).
+- ASM SYSASM auth must be complete or dbca dies on ORA-01017/01031:
+  `$GI/dbs/orapw+ASM<n>` exists, `GRANT SYSASM TO SYS` ran on each ASM,
+  and the oracle user is in the `asmadmin` group.
+- `db_recovery_file_dest` is set via **spfile + restart** (dynamic ALTER
+  of a brand-new DG on a running instance fails ORA-19802); dbca already
+  sets the size.
+- `dbca -addInstance` has no role in a normal build (its 11.2 grammar
+  also rejects `-dbName`); the task survives only under
+  `--tags legacy-addnode`.
+
+
 ### Verify
 
 ```bash
