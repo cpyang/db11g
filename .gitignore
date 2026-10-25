@@ -1,8 +1,13 @@
 # Oracle installation packages (large files, need user to download)
 packages/
 
-# Installation media source for the VMs (11.2.0.4 zips, never committed)
-staging/
+# Installation media staging (11.2.0.4 zips live here, never committed;
+# see staging/README.md). Directory contents are ignored except the note;
+# the bare rule also silences a leftover top-level staging symlink.
+/staging
+!/staging/
+/staging/*
+!/staging/README.md
 
 # Pinned ansible venv (ansible-core 2.16 for EL7/py3.6 targets)
 .venv-ansible/
