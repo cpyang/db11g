@@ -81,30 +81,41 @@
       failed_when: dbca_add.rc != 0
       tags: [never, legacy-addnode]
 
-    - name: Point db_recovery_file_dest at +FRA (dynamic; dest before size)
+    - name: Ensure database is up (any state at play start)
+      command: "{{ grid_home }}/bin/srvctl start database -d {{ db_name }}"
+      become_user: oracle
+      register: db_start
+      # PRCC-1014 "already running" lands on STDOUT (rc=1), not stderr.
+      failed_when: >-
+        db_start.rc != 0
+        and 'already running' not in ((db_start.stderr | default('')) ~ (db_start.stdout | default('')))
+      changed_when: true
+
+    - name: Point db_recovery_file_dest at +FRA (spfile; dbca pre-set size)
+      # Dynamic ALTER of the dest on a running 11.2 RAC instance dies with
+      # ORA-19802 (kfs won't mount a fresh DG live); spfile + restart is the
+      # canonical path. dbca already sets db_recovery_file_dest_size.
       shell: |-
         {{ oracle_home }}/bin/sqlplus -S / as sysdba <<'SQL'
-        ALTER SYSTEM SET db_recovery_file_dest='+{{ asm_diskgroup_fra }}' SCOPE=BOTH SID='*';
-        ALTER SYSTEM SET db_recovery_file_dest_size=8G SCOPE=BOTH SID='*';
+        ALTER SYSTEM SET db_recovery_file_dest='+{{ asm_diskgroup_fra }}' SCOPE=SPFILE SID='*';
         EXIT
         SQL
       become_user: oracle
       environment: "{{ db_home_env }}"
       register: fra_set
       changed_when: true
-      # ORA-32001/ORA-02096 combos mean "already set" — re-run safe, but
-      # show the line so a genuine error is visible:
-      failed_when: >-
-        fra_set.rc != 0 or 'ORA-' in fra_set.stdout
-      ignore_errors: true
+      failed_when: fra_set.rc != 0 or 'ORA-' in fra_set.stdout
       tags: [fra]
 
-    - name: Ensure database is up (any state at play start)
-      command: "{{ grid_home }}/bin/srvctl start database -d {{ db_name }}"
+    - name: Restart database to apply FRA dest
+      shell: |
+        {{ grid_home }}/bin/srvctl stop database -d {{ db_name }} -o immediate
+        sleep 5
+        {{ grid_home }}/bin/srvctl start database -d {{ db_name }}
       become_user: oracle
-      register: db_start
-      failed_when: db_start.rc != 0 and 'already running' not in db_start.stderr
+      environment: "{{ db_home_env }}"
       changed_when: true
+      tags: [fra]
 
     - name: Verify both instances OPEN
       shell: |-
