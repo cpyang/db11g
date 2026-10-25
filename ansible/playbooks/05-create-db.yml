@@ -40,7 +40,7 @@
         {{ oracle_home }}/bin/dbca -silent -createDatabase
         -templateName {{ dbca_template }}
         -gdbName {{ db_name }}
-        -sid {{ db_sid_prefix }}1
+        -sid {{ db_sid_prefix }}
         -sysPassword {{ sys_password }}
         -systemPassword {{ system_password }}
         -dbsnmpPassword {{ dbsnmp_password }}
@@ -61,6 +61,9 @@
       when: db_registered.rc != 0
 
     - name: dbca addInstance for node2
+      # OBSOLETE: -createDatabase now passes -nodeList (both nodes), so the
+      # create itself produces rac1+rac2 in one shot. -dbName here was also
+      # invalid on 11.2 dbca. Kept force-runnable for legacy mid-states only.
       command: >-
         {{ oracle_home }}/bin/dbca -silent -addInstance
         -dbName {{ db_name }}
@@ -76,6 +79,7 @@
       changed_when: true
       when: db_registered.rc != 0
       failed_when: dbca_add.rc != 0
+      tags: [never, legacy-addnode]
 
     - name: Point db_recovery_file_dest at +FRA (dynamic; dest before size)
       shell: |-
